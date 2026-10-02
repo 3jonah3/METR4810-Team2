@@ -24,6 +24,7 @@
 #include "motor.h"
 #include "stepper.h"
 #include "servo.h"
+#include "switch.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,6 +34,17 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+/* Change to 1 if DIR=0 travels away from SW4 on the assembled robot. */
+#define DIR_TO_SWITCH4 0U
+#define SWITCH_DEBOUNCE_MS 30U
+/* Change this one value to adjust speed; period and pulse width follow it. */
+#define STEPPER_STEP_HZ 1000U
+#define STEPPER_TIMER_HZ 1000000U
+#if (STEPPER_STEP_HZ == 0U)
+#error Step frequency must be nonzero
+#elif ((STEPPER_TIMER_HZ / STEPPER_STEP_HZ) < 2U) || ((STEPPER_TIMER_HZ / STEPPER_STEP_HZ) > 65536U)
+#error Step period must fit TIM16 and leave time for both high and low levels
+#endif
 
 /* USER CODE END PD */
 
@@ -51,6 +63,9 @@ TIM_HandleTypeDef htim16;
 PCD_HandleTypeDef hpcd_USB_FS;
 
 /* USER CODE BEGIN PV */
+static uint8_t target_switch = 4U;
+/* Both travel limits pressed together latches this fault until reset. */
+static volatile uint8_t limit_fault = 0U;
 
 /* USER CODE END PV */
 
@@ -68,6 +83,11 @@ static void MX_TIM4_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static uint8_t StepperDirectionToTarget(void)
+{
+  return (target_switch == 4U) ? DIR_TO_SWITCH4 : (DIR_TO_SWITCH4 ^ 1U);
+}
+
 
 /* USER CODE END 0 */
 
@@ -100,24 +120,39 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+
   MX_ADC1_Init();
-  MX_USB_PCD_Init();
+  // MX_USB_PCD_Init();  // USB hardware disabled for now.
   MX_TIM1_Init();
   MX_TIM16_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-
   Motor1_Init(&htim1);
   Motor1_SetDuty(100);
-
   Stepper1_Init(&htim16);
-  Stepper1_Start(0);
 
   Servo_Init(&htim4);
+  servo(2, 20);  // Servo 2 to centre (1500 µs)
+  /* Servo PWM is not started during this stepper test. */
 
-  servo(1, 90);   // Servo 1: nominal centre
-  servo(2, 90);   // Servo 2: nominal centre
+  /* TIM16 counts at 1 MHz. Keep STEP high for half of each period. */
+  const uint32_t step_period_ticks = STEPPER_TIMER_HZ / STEPPER_STEP_HZ;
+  __HAL_TIM_SET_AUTORELOAD(&htim16, step_period_ticks - 1U);
+  __HAL_TIM_SET_COMPARE(&htim16, TIM_CHANNEL_1, step_period_ticks / 2U);
+  HAL_TIM_GenerateEvent(&htim16, TIM_EVENTSOURCE_UPDATE);
 
+  /* Begin travel immediately after initialization; no start-button wait. */
+
+  if (Switch_IsPressed(1) && Switch_IsPressed(4))
+  {
+    limit_fault = 1U;
+  }
+  else
+  {
+    /* If already at SW4, move away toward SW1. Otherwise seek SW4 first. */
+    target_switch = Switch_IsPressed(4) ? 1U : 4U;
+    Stepper1_Start(StepperDirectionToTarget());
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -127,12 +162,35 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_9);  // LED1
-	servo(2, 180);
-	HAL_GPIO_TogglePin(GPIOF, GPIO_PIN_1);  // LED2
-	HAL_Delay(500);
-	servo(2, 0);
-	HAL_Delay(2000);
+    if (!limit_fault)
+    {
+      if (Switch_IsPressed(1) && Switch_IsPressed(4))
+      {
+        Stepper1_Stop();
+        limit_fault = 1U;
+      }
+      else if (Switch_IsPressed(target_switch))
+      {
+        /* Stop on the first press; debounce with the motor stopped. */
+        Stepper1_Stop();
+        HAL_Delay(SWITCH_DEBOUNCE_MS);
+
+        if (Switch_IsPressed(1) && Switch_IsPressed(4))
+        {
+          limit_fault = 1U;
+        }
+        else
+        {
+          if (Switch_IsPressed(target_switch))
+          {
+            target_switch = (target_switch == 4U) ? 1U : 4U;
+          }
+          /* A false press resumes toward the SAME target, in either direction. */
+          Stepper1_Start(StepperDirectionToTarget());
+        }
+      }
+    }
+    HAL_Delay(1);
   }
   /* USER CODE END 3 */
 }
@@ -526,10 +584,16 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_3
                           |GPIO_PIN_9, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PC13 PC10 PC11 PC12 */
-  GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_10|GPIO_PIN_11|GPIO_PIN_12;
+  /*Configure GPIO pins : PC13 PC12 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_12;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PC14 PC15 PC10 PC11 */
+  GPIO_InitStruct.Pin = GPIO_PIN_14|GPIO_PIN_15|GPIO_PIN_10|GPIO_PIN_11;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PF1 */
@@ -634,6 +698,11 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* ES/start button: PC3 is driven to 3.3 V when pressed. */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
