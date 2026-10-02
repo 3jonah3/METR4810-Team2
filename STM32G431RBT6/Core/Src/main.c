@@ -120,6 +120,10 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  while (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_11) == GPIO_PIN_SET)
+  {
+      HAL_Delay(1);
+  }
 
   MX_ADC1_Init();
   // MX_USB_PCD_Init();  // USB hardware disabled for now.
