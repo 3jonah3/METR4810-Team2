@@ -30,6 +30,8 @@ The project is now saved locally in `METR4810-Team2`.
 4. Select the repository's `METR4810_Team2_code` folder and click **Finish**.
 5. Click **Build** (hammer icon).
 
+Note: TBH, This is very simplifed there is likely a bit more setup to this, where you have to sort out your workspace, use google/AI for help
+
 ## 3. Flash the PCB
 
 1. Connect ST-LINK to the PCB's **J24** header: **SWDIO → IO**, **SWCLK → CLK**, **NRST → RST**. The programming header is missing a GND pin, so connect the **black ST-LINK ground wire to GND on the spare GPIO header**, as shown below. Power the PCB.
