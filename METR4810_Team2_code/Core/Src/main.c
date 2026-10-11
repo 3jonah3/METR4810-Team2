@@ -120,18 +120,16 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  while (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_11) == GPIO_PIN_SET)
-  {
-      HAL_Delay(1);
-  }
-
   MX_ADC1_Init();
-  // MX_USB_PCD_Init();  // USB hardware disabled for now.
+  MX_USB_PCD_Init();
   MX_TIM1_Init();
   MX_TIM16_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-
+  while (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_11) == GPIO_PIN_SET)
+  {
+      HAL_Delay(1);
+  }
   Motor1_Init(&htim1);
   Motor1_SetDuty(100);
   Stepper1_Init(&htim16);
@@ -607,6 +605,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PC3 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PA0 PA1 PA2 PA3 */
   GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3;
