@@ -38,7 +38,7 @@
 #define DIR_TO_SWITCH4 0U
 #define SWITCH_DEBOUNCE_MS 30U
 /* Change this one value to adjust speed; period and pulse width follow it. */
-#define STEPPER_STEP_HZ 1000U
+#define STEPPER_STEP_HZ 500U
 #define STEPPER_TIMER_HZ 1000000U
 #if (STEPPER_STEP_HZ == 0U)
 #error Step frequency must be nonzero
