@@ -36,15 +36,18 @@ The project file to open/import in STM32CubeIDE is:
 <your clone folder>\METR4810-Team2\METR4810_Team2_code\.project
 ```
 
-Select the folder containing this `.project` when importing. Leave **Copy projects into workspace** unchecked. Do not open a project copy inside `build` or `usart1-test`.
+Select the folder containing this `.project` when importing. Leave **Copy projects into workspace** unchecked. 
 
 Note: TBH, This is very simplifed there is likely a bit more setup to this, where you have to sort out your workspace, use google/AI for help
+You may also have to download stm32MX aswell...
 
 ## 3. Flash the PCB
 
 1. Connect ST-LINK to the PCB's **J24** header: **SWDIO → IO**, **SWCLK → CLK**, **NRST → RST**. The programming header is missing a GND pin, so connect the **black ST-LINK ground wire to GND on the spare GPIO header**, as shown below. Power the PCB.
-2. In CubeIDE, select **METR4810_Team2_code Debug** and click **Debug** to flash.
+2. In CubeIDE, which can be opened by clicking on the .project file, once opened click **Debug** to flash.
 3. If it pauses at `main`, click **Resume (F8)** to run the code.
+
+
 
 **PCB connection:** GND was accidentally left out of the programming header during the PCB design. Connect the black ST-LINK ground wire to GND on the spare GPIO header, marked by the arrow below.
 
