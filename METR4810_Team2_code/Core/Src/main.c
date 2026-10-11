@@ -21,10 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "motor.h"
-#include "stepper.h"
-#include "servo.h"
-#include "switch.h"
+#include "robot_control.h"
+#include "serial.h"
+#include "status_led.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,17 +33,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* Change to 1 if DIR=0 travels away from SW4 on the assembled robot. */
-#define DIR_TO_SWITCH4 0U
-#define SWITCH_DEBOUNCE_MS 30U
-/* Change this one value to adjust speed; period and pulse width follow it. */
-#define STEPPER_STEP_HZ 500U
-#define STEPPER_TIMER_HZ 1000000U
-#if (STEPPER_STEP_HZ == 0U)
-#error Step frequency must be nonzero
-#elif ((STEPPER_TIMER_HZ / STEPPER_STEP_HZ) < 2U) || ((STEPPER_TIMER_HZ / STEPPER_STEP_HZ) > 65536U)
-#error Step period must fit TIM16 and leave time for both high and low levels
-#endif
 
 /* USER CODE END PD */
 
@@ -60,12 +48,11 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim16;
 
+UART_HandleTypeDef huart1;
+
 PCD_HandleTypeDef hpcd_USB_FS;
 
 /* USER CODE BEGIN PV */
-static uint8_t target_switch = 4U;
-/* Both travel limits pressed together latches this fault until reset. */
-static volatile uint8_t limit_fault = 0U;
 
 /* USER CODE END PV */
 
@@ -77,17 +64,13 @@ static void MX_USB_PCD_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM16_Init(void);
 static void MX_TIM4_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static uint8_t StepperDirectionToTarget(void)
-{
-  return (target_switch == 4U) ? DIR_TO_SWITCH4 : (DIR_TO_SWITCH4 ^ 1U);
-}
-
 
 /* USER CODE END 0 */
 
@@ -125,37 +108,11 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM16_Init();
   MX_TIM4_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  while (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_11) == GPIO_PIN_SET)
-  {
-      HAL_Delay(1);
-  }
-  Motor1_Init(&htim1);
-  Motor1_SetDuty(100);
-  Stepper1_Init(&htim16);
-
-  Servo_Init(&htim4);
-  servo(2, 20);  // Servo 2 to centre (1500 µs)
-  /* Servo PWM is not started during this stepper test. */
-
-  /* TIM16 counts at 1 MHz. Keep STEP high for half of each period. */
-  const uint32_t step_period_ticks = STEPPER_TIMER_HZ / STEPPER_STEP_HZ;
-  __HAL_TIM_SET_AUTORELOAD(&htim16, step_period_ticks - 1U);
-  __HAL_TIM_SET_COMPARE(&htim16, TIM_CHANNEL_1, step_period_ticks / 2U);
-  HAL_TIM_GenerateEvent(&htim16, TIM_EVENTSOURCE_UPDATE);
-
-  /* Begin travel immediately after initialization; no start-button wait. */
-
-  if (Switch_IsPressed(1) && Switch_IsPressed(4))
-  {
-    limit_fault = 1U;
-  }
-  else
-  {
-    /* If already at SW4, move away toward SW1. Otherwise seek SW4 first. */
-    target_switch = Switch_IsPressed(4) ? 1U : 4U;
-    Stepper1_Start(StepperDirectionToTarget());
-  }
+  StatusLed_Init();
+  Robot_Init(&htim1, &htim16, &htim4);
+  Serial_Init(&huart1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -165,35 +122,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (!limit_fault)
-    {
-      if (Switch_IsPressed(1) && Switch_IsPressed(4))
-      {
-        Stepper1_Stop();
-        limit_fault = 1U;
-      }
-      else if (Switch_IsPressed(target_switch))
-      {
-        /* Stop on the first press; debounce with the motor stopped. */
-        Stepper1_Stop();
-        HAL_Delay(SWITCH_DEBOUNCE_MS);
-
-        if (Switch_IsPressed(1) && Switch_IsPressed(4))
-        {
-          limit_fault = 1U;
-        }
-        else
-        {
-          if (Switch_IsPressed(target_switch))
-          {
-            target_switch = (target_switch == 4U) ? 1U : 4U;
-          }
-          /* A false press resumes toward the SAME target, in either direction. */
-          Stepper1_Start(StepperDirectionToTarget());
-        }
-      }
-    }
-    HAL_Delay(1);
+    Robot_Update();
+    Serial_Update();
+    StatusLed_Update();
   }
   /* USER CODE END 3 */
 }
@@ -526,6 +457,54 @@ static void MX_TIM16_Init(void)
 }
 
 /**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart1.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart1, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart1, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
   * @brief USB Initialization Function
   * @param None
   * @retval None
@@ -634,14 +613,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PC4 PC5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PB0 PB1 */
   GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1;

@@ -3,8 +3,6 @@
 
 static TIM_HandleTypeDef *servoTimer = NULL;
 
-#define SERVO_MAX_ANGLE 120
-
 /*
  * Starting pulse limits, NOT specified by the supplied datasheet.
  * Calibrate each servo separately if the measured travel differs.
@@ -58,9 +56,23 @@ void Servo_Init(TIM_HandleTypeDef *timer)
 
     HAL_TIM_GenerateEvent(servoTimer, TIM_EVENTSOURCE_UPDATE);
 
-    if (HAL_TIM_PWM_Start(servoTimer, TIM_CHANNEL_1) != HAL_OK ||
-        HAL_TIM_PWM_Start(servoTimer, TIM_CHANNEL_2) != HAL_OK)
-    {
-        Error_Handler();
-    }
+    Servo_Stop();
+}
+
+HAL_StatusTypeDef Servo_Start(uint8_t servo_ID)
+{
+    if (!servoTimer || servo_ID < 1 || servo_ID > 2) return HAL_ERROR;
+    uint32_t channel = channels[servo_ID - 1];
+    if (TIM_CHANNEL_STATE_GET(servoTimer, channel) == HAL_TIM_CHANNEL_STATE_BUSY)
+        return HAL_OK;
+    /* Apply preloaded target before enabling an inactive channel. */
+    HAL_TIM_GenerateEvent(servoTimer, TIM_EVENTSOURCE_UPDATE);
+    return HAL_TIM_PWM_Start(servoTimer, channel);
+}
+
+void Servo_Stop(void)
+{
+    if (!servoTimer) return;
+    HAL_TIM_PWM_Stop(servoTimer, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Stop(servoTimer, TIM_CHANNEL_2);
 }
