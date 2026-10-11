@@ -131,6 +131,7 @@ int main(void)
   MX_TIM16_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
+
   Motor1_Init(&htim1);
   Motor1_SetDuty(100);
   Stepper1_Init(&htim16);
