@@ -14,7 +14,7 @@ The serial interface is temporarily moved from USART3 (PB10/PB11) to the existin
 | Servo 1 | PB7, TIM4 CH2 | 50 Hz, 0–120 degrees |
 | Servo 2 | PB6, TIM4 CH1 | 50 Hz, 0–120 degrees |
 | SW1 / SW4 | PC14 / PC15 | Active LOW, internal pull-ups |
-| Startup / SW2 | PC11 | Active LOW, internal pull-up |
+| Run/stop / SW2 | PC11 | Active LOW, internal pull-up |
 | SW3 | PC10 | Active LOW, internal pull-up |
 
 Use a **3.3 V TTL UART adapter**, a common GND, and the crossed TX/RX wiring above.
@@ -29,22 +29,26 @@ USART1 IRQ priority is 2; TIM1_UP_TIM16 priority is 1 (lower number is higher pr
 The shared timer handler services both TIM1 and TIM16; only manual TIM16 motion
 enables update interrupts. SysTick remains priority 15. Existing clocks are unchanged:
 SYSCLK/APB timers 16 MHz, timer prescalers 15, hence 1 MHz timer counters.
-Other preassigned but inactive peripheral pins remain untouched. PC3 is not used as
-the startup gate; this implementation preserves the actual PC11 gate from main.c.
+Other preassigned but inactive peripheral pins remain untouched. PC3 is not used for
+run/stop; PC11/SW2 is the run/stop button.
 
 ## Operation and safety rules
 
-Power-up is IDLE: DC duty zero, STEP stopped, servo PWM disabled. Diagnostics work
-before startup authorization. A LOW observed on PC11 latches startup authorization
-until reset, matching the original one-time startup wait. Releasing PC11 does not
-stop movement or revoke authorization. It is not a continuously held enable.
+Power-up is IDLE: DC duty zero, STEP stopped, servo PWM disabled. There is no
+startup interlock: UART motion commands work immediately. PC11/SW2 is an active-LOW
+run/stop toggle, polled independently of UART. A press starts the same program as
+`run`; a press while RUNNING performs `stop`. Press and release each require 30 ms
+of stable input. Holding the button does not repeat. A button held during reset
+must be released and pressed again before it can start motion. UART and button
+controls share state: either can stop a run started by the other. From individual
+actuator operation (IDLE), a button press starts the full autonomous program.
 
-`RUN` starts the DC motor at 100% and the existing SW1/SW4 travel sequence together.
+`run` starts the DC motor at 100% and the existing SW1/SW4 travel sequence together.
 The first target is SW4 unless SW4 is already pressed. At each target press, STEP
 stops immediately; after 30 ms, a still-pressed switch reverses the target and a
 false press resumes toward the same target. This debounce is nonblocking.
 
-`STOP` cancels all stepper activity, sets DC duty to zero, disables both servo PWM
+`stop` cancels all stepper activity, sets DC duty to zero, disables both servo PWM
 outputs, and enters STOPPED. The next accepted movement command can resume motion.
 RUN is restartable and repeated RUN during RUNNING does not reset travel.
 Stopping servo PWM stops commands but cannot guarantee an immediate mechanical stop
@@ -52,16 +56,15 @@ or holding torque; retained servo targets are historical targets, not feedback.
 
 Simultaneous SW1 and SW4 activation latches a fault in every operating mode and stops
 all motors. Releasing the switches or sending STOP does not clear it. Correct the
-cause, reset, and satisfy PC11 again. All commands that cause movement check this
-fault and the startup latch. Manual motion stops early at its target limit; moving
+cause and reset. Both button and UART starts respect this latched fault. Manual motion stops early at its target limit; moving
 away from one pressed limit is allowed.
 
 While RUNNING, individual movement and speed commands are rejected. Send STOP first.
-`STEPPER STOP`, `MOTOR STOP`, and `MOTOR 0` during RUNNING stop the whole robot to
+`stepper(stop)`, `motor(stop)`, and `motor(0)` during RUNNING stop the whole robot to
 cancel coordinated motion consistently. Outside RUNNING, individual stops affect
 only that actuator. Standalone commands leave the global state IDLE, so inspect the
 actuator status fields to determine movement; IDLE means no full autonomous program.
-`STEPPER AUTO` replaces a manual move with standalone limit-to-limit motion, leaving
+`stepper(auto)` replaces a manual move with standalone limit-to-limit motion, leaving
 DC duty unchanged. A manual move requires the stepper to be stopped first.
 
 Serial STOP is a software stop. For an emergency stop, use independent hardware to
@@ -70,6 +73,22 @@ with a deliberate reset/re-enable procedure. UART, firmware polling, and PC11 ar
 not a substitute for that hardware.
 
 ## Commands
+
+Quick example (with room for safe motion):
+
+```text
+help
+servo(90)
+motor(30)
+motor(0)
+motor(-30)
+stop
+stepper(speed,100)
+stepper(20)
+stepper(status)
+stop
+```
+
 
 ### Diagnostic LEDs
 
@@ -92,23 +111,29 @@ If PF1 flashes but PuTTY stays blank, check PC4-to-adapter-RX and the PC setting
 
 ### Command reference
 
+On reset the controller prints a welcome message, ASCII owl beneath "Welcome to METR4810 Team 2 CLI", and the complete
+lowercase command guide, including descriptions, ranges, examples and motion rules. Physical servo 2 (PB6/TIM4 CH1) is the only servo exposed
+by the CLI; servo 1 is never enabled by serial commands. `servo()` / `motor()` /
+`stepper()` display help without moving anything. The previous space-separated
+actuator commands have been replaced; use parentheses and a comma for stepper speed.
+
 Commands are case-insensitive and accept CR, LF, or CRLF. Leading/trailing spaces
-and tabs are accepted. Extra parameters and numeric suffixes are rejected.
+and tabs around names and arguments are accepted, e.g. `motor( -50 )`. Extra parameters, malformed parentheses, and numeric suffixes are rejected.
 
 | Command | Result |
 |---|---|
-| `PING` | `OK PONG` |
-| `HELP` | Command list |
-| `STATUS` | System state, stepper mode/target/speed/remaining count, DC duty, limits, fault, startup latch, dropped TX response count |
-| `LIMITS` | SW1–SW4; 1 means pressed |
-| `RUN` / `STOP` | Start full existing autonomous operation / stop everything |
-| `STEPPER 200` / `STEPPER -200` | 200 pulses toward SW4 / SW1 |
-| `STEPPER SPEED 500` | Set nominal speed, 16–2000 steps/s; stepper must be stopped |
-| `STEPPER AUTO` / `STEPPER STOP` / `STEPPER STATUS` | Standalone automatic travel / stop / inspect |
-| `SERVO 1 90` / `SERVO 2 45` | Set target and enable that servo's PWM |
-| `SERVO STATUS` | Last accepted targets; -1 means no commanded position |
-| `MOTOR 50` | 0–100% duty |
-| `MOTOR STOP` / `MOTOR STATUS` | Stop / inspect DC motor |
+| `ping` | `OK PONG` |
+| `help` | Command list |
+| `status` | System state, stepper mode/target/speed/remaining count, DC duty, limits, fault, PC11 button state, dropped TX response count |
+| `limits` | SW1–SW4; 1 means pressed |
+| `run` / `stop` | Start full existing autonomous operation / stop everything |
+| `stepper(200)` / `stepper(-200)` | 200 pulses toward SW4 / SW1 |
+| `stepper(speed,500)` | Set nominal speed, 16–2000 steps/s; stepper must be stopped |
+| `stepper(auto)` / `stepper(stop)` / `stepper(status)` | Standalone automatic travel / stop / inspect |
+| `servo(90)` / `servo(45)` | Set physical servo 2 target and enable its PWM |
+| `servo(status)` | Last accepted servo 2 target; -1 means no commanded position |
+| `motor(50)` / `motor(-50)` | Signed duty from -100 to +100%; negative reverses direction |
+| `motor(stop)` / `motor(status)` | Stop / inspect DC motor |
 
 Manual counts are limited to ±1,000,000, excluding zero. TIM16 uses PWM2 one-pulse
 mode for manual motion: one rising edge per hardware cycle, ending LOW at overflow.
@@ -123,7 +148,7 @@ The original servo conversion is retained: 0–120 degrees maps to 1000–2000 m
 with rounding; 60 degrees is 1500 microseconds. These pulse limits were provisional
 in the existing driver and still require calibration on the actual servos.
 
-RX uses a 256-byte ring; commands have at most 95 characters; TX uses a 2048-byte ring.
+RX uses a 256-byte ring; commands have at most 95 characters; TX uses a 4096-byte ring.
 No dynamic allocation is used by application modules. Callbacks only buffer bytes,
 complete TX, signal UART errors, or count/rearm pulses. Parsing and control run in
 the main loop. TX never blocks STOP processing. If responses saturate TX, whole
@@ -143,50 +168,51 @@ backspace control bytes; they are deliberately rejected by the firmware.
    COM port, **115200**, **8 data bits**, **1 stop bit**, **None parity**, **None flow
    control**. For readable typing, set Terminal → Local echo and Local line editing
    to **Force on**. The firmware does not send a `>` prompt or echo typed characters.
-2. With PC11 HIGH, reset. Expect `READY: IDLE; TYPE HELP`. Send `PING`, `HELP`,
-   `STATUS`, `LIMITS`. Confirm IDLE, zero DC duty, stopped stepper, startup WAITING,
-   correct switch readings, and no PWM on STEP/servos. `RUN`, `MOTOR 50`,
-   `STEPPER 1`, `STEPPER AUTO`, and `SERVO 1 90` must all be rejected.
-3. Activate PC11 LOW once. STATUS should show SATISFIED (LATCHED), with no motion.
-   Releasing PC11 must leave the latch satisfied. Check limit polarities and DIR
-   direction before enabling actuator power.
+2. With PC11 HIGH, reset. Expect the welcome/help and `READY: IDLE; type help`.
+   Confirm IDLE, zero DC duty, stopped stepper, button RELEASED and no servo PWM.
+   Verify UART movement works without first pressing PC11, then stop.
+3. Disconnect UART and press PC11: the full autonomous program must run. Holding
+   it must not toggle repeatedly. Release and press again: all motion must stop.
+   Reset while holding it: remain idle until release and a fresh press. Also test
+   UART `run` followed by button stop, and button run followed by UART `stop`.
 4. In a clear, secured mechanism, send the sequence below. Verify the DC motor and
    stepper run together, reverse at both limits, stop, and restart without reset.
 
    ```text
-   RUN
-   STATUS
-   STOP
-   STATUS
-   RUN
-   STOP
+   run
+   status
+   stop
+   status
+   run
+   stop
    ```
 
 5. Send STOP during travel, during the 30 ms limit debounce, and while holding either
    limit. Confirm no later autonomous restart. Try individual movement commands
-   during RUN; expect rejection. Try MOTOR STOP and STEPPER STOP during RUN; both
+   during run; expect rejection. Try `motor(stop)` and `stepper(stop)` during run; both
    must cancel the entire program. Start RUN with SW4 pressed; first travel must
    be toward SW1. Simulate a brief switch bounce; resume toward the original target.
-6. With the stepper stopped, set speed to 500, then issue `STEPPER 1`, `STEPPER 200`,
-   `STEPPER -200` with sufficient free travel. Count rising edges on PB4 using a
+6. With the stepper stopped, set speed to 500, then issue `stepper(1)`, `stepper(200)`,
+   `stepper(-200)` with sufficient free travel. Count rising edges on PB4 using a
    logic analyzer: exactly 1, 200, 200 unless interrupted by STOP or a limit.
    Repeat at 16 and 2000 steps/s, including simultaneous STATUS traffic. Confirm
    LOW idle, DIR setup time, clean first/last pulses, no extra edges after STOP,
    and no lost mechanical steps. STOP mid-move and verify REMAINING becomes zero.
-7. Test `MOTOR 50`, `MOTOR 100`, `MOTOR STOP`, and their status. Test servo targets
-   0, 60, 90, 120 on each servo, then STOP. Measure 50 Hz and pulse widths
+7. Test `motor(50)`, `motor(-50)`, `motor(100)`, `motor(-100)`, `motor(stop)`, and `motor(status)`. Verify the physical direction and signed duty in status; use low duty initially with the mechanism clear. Test servo targets
+   0, 60, 90, 120 on physical servo 2, then STOP. Measure 50 Hz and pulse widths
    1000, 1500, 1750, 2000 microseconds. Verify initialization does not move either
    servo; validate safe mechanical endpoints before exercising the full range.
 8. Test lowercase commands, CR-only, LF-only, and CRLF (one reply per command).
-   Try `STEPPER SPEED -100`, `SERVO 1 200`, `MOTOR 101`, `MOTOR -1`, `SERVO 1`,
-   `STEPPER`, `MOTOR 50x`, a huge integer, `RUN extra`, and `UNKNOWN`.
+   Try `stepper(speed,-100)`, `servo(200)`, `motor(101)`, `motor(-101)`, `servo(1,90)`,
+   `STEPPER`, `motor(50x)`, a huge integer, `RUN extra`, and `UNKNOWN`.
    Expect errors without starting movement. Paste more than 95 characters in one
    line; expect a stop/error, then verify PING works. Flood input to exercise RX/TX
    saturation; after receive overflow send an empty line, then PING. Inject UART
    framing errors if test equipment permits and check recovery without reset.
 9. Activate SW1 and SW4 together while idle and while running. All motion must stop;
    STATUS must show a latched fault. Release both and attempt every movement command;
-   none may run. Reset, verify the startup latch is cleared, then reauthorize PC11.
+   none may run, including via PC11. Correct the cause and reset; verify IDLE, then
+   confirm a fresh button press or UART run can start again.
 
 Measure worst-case STOP-to-STEP-low latency under command traffic; no hard real-time
 latency is claimed from host tests. The only intentional motion-path delay remaining
@@ -197,7 +223,7 @@ fault; those are outside this requested autonomous sequence.
 ## Files, building, regeneration, and validation
 
 - `Core/Src/serial.c`, `Core/Inc/serial.h`: interrupt buffers, recovery, parser, replies.
-- `Core/Src/robot_control.c`, `Core/Inc/robot_control.h`: modes, startup/fault latches,
+- `Core/Src/robot_control.c`, `Core/Inc/robot_control.h`: modes, debounced run button, fault latch,
   nonblocking original travel sequence, individual-command policy.
 - `Core/Src/main.c`: generated initialization plus protected calls to both modules.
 - `stepper.c/.h`: retain continuous travel driver; add speed/count APIs and TIM16
@@ -243,10 +269,10 @@ CubeMX regeneration was run on an isolated copy: the custom modules and main-loo
 hooks survived, and USART1 plus TIM1_UP_TIM16 handlers were generated correctly.
 The resulting generated initialization/IRQ files were incorporated into the project.
 After future regeneration, inspect the diff, rebuild, rerun host tests, and repeat
-at least the idle/interlock/RUN/STOP hardware tests. Do not move custom code outside
+at least the idle/button/RUN/STOP hardware tests. Do not move custom code outside
 USER CODE blocks or define duplicate HAL UART/timer callbacks.
 
 Development validation: ARM firmware compile/link passed with `-Wall -Wextra`;
-host regression suite passed 773 checks. Physical wiring, electrical pulse accuracy,
+host regression suite passed 861 checks. Physical wiring, electrical pulse accuracy,
 servo calibration, switch noise, direction, motor dynamics, and worst-case stop
 latency remain to be validated on the actual PCB.

@@ -8,7 +8,8 @@ typedef struct {
     RobotState state;
     RobotStepMode step_mode;
     uint32_t speed;
-    uint8_t target, duty, unlocked, fault;
+    uint8_t target, fault;
+    int duty;
     int servo_angle[2]; /* -1 until explicitly commanded */
 } RobotStatus;
 
@@ -20,7 +21,7 @@ const char *Robot_StartAuto(void);
 const char *Robot_StepperAuto(void);
 const char *Robot_Move(int32_t steps);
 const char *Robot_SetSpeed(uint32_t speed);
-const char *Robot_SetMotor(unsigned duty);
+const char *Robot_SetMotor(int duty);
 const char *Robot_SetServo(unsigned id, unsigned angle);
 void Robot_StopStepper(void);
 void Robot_StopMotor(void);

@@ -11,7 +11,7 @@
 #include <string.h>
 
 #define RX_SIZE 256U
-#define TX_SIZE 2048U
+#define TX_SIZE 4096U
 #define LINE_SIZE 96U
 static UART_HandleTypeDef *port;
 static uint8_t rx_byte, tx[TX_SIZE];
@@ -22,6 +22,7 @@ static volatile unsigned tx_tail, tx_active;
 static unsigned tx_head, tx_dropped;
 static char line[LINE_SIZE];
 static unsigned line_length, discard_line;
+static void help(void);
 
 /* Main-loop producer, interrupt consumer. Never wait for transmission. */
 static void reply(const char *format, ...)
@@ -57,7 +58,8 @@ void Serial_Init(UART_HandleTypeDef *uart)
     tx_head = tx_tail = tx_active = tx_dropped = 0;
     line_length = discard_line = 0;
     if (HAL_UART_Receive_IT(port, &rx_byte, 1) != HAL_OK) rx_fault = 1;
-    reply("READY: IDLE; TYPE HELP\r\n");
+    reply("\r\nWelcome to METR4810 Team 2 CLI\r\n\r\n ,_,\r\n(O,O)\r\n(   )\r\n-\"-\"------\r\n\r\nREADY: IDLE; type help\r\n\r\n");
+    help();
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)
@@ -115,9 +117,9 @@ static void status(void)
 {
     const RobotStatus *s = Robot_GetStatus();
     const char *states[] = {"IDLE", "RUNNING", "STOPPED"};
-    reply("STATE: %s\r\nDC MOTOR: %u%%\r\nFAULT: %s\r\nPC11 STARTUP: %s\r\nTX RESPONSES DROPPED: %u\r\n",
+    reply("STATE: %s\r\nDC MOTOR: %d%%\r\nFAULT: %s\r\nPC11 RUN BUTTON: %s\r\nTX RESPONSES DROPPED: %u\r\n",
           states[s->state], s->duty, s->fault ? "LIMIT FAULT LATCHED" : "NONE",
-          s->unlocked ? "SATISFIED (LATCHED)" : "WAITING", tx_dropped);
+          Switch_IsPressed(2) ? "PRESSED" : "RELEASED", tx_dropped);
     step_status();
     limits();
 }
@@ -127,27 +129,59 @@ static void result(const char *error, const char *success)
     reply(error ? "ERROR: %s\r\n" : "OK: %s\r\n", error ? error : success);
 }
 
+static void help(void)
+{
+    reply("%s", "available commands:\r\nType one command and press Enter. Commands ignore letter case.\r\nUse whole numbers for angles, duty, steps and speed.\r\n\r\nGENERAL\r\n  help       Show this full command guide.\r\n  ping       Test the serial link; replies OK PONG.\r\n  status     Show robot state, stepper mode/target/speed/remaining,\r\n             signed motor duty, limits, run button and faults.\r\n             Also reports dropped serial response fragments.\r\n  limits     Read SW1-SW4: 1=pressed, 0=released; SW2 is PC11.\r\n\r\n");
+    reply("%s", "AUTONOMOUS CONTROL\r\n  run        Start DC motor at +100% and stepper travel between\r\n             SW1 and SW4. Reverse at each limit after 30 ms debounce.\r\n             Continues until stop or a fault; run can restart it.\r\n  stop       Stop DC motor and stepper, cancel pending moves/auto,\r\n             disable servo PWM, and enter STOPPED. UART stays active.\r\n             This is a software stop, not a hardware emergency stop.\r\n\r\n");
+    reply("%s", "SERVO (physical servo 2 only, PB6)\r\n  servo(angle)  Set target angle from 0 to 120 degrees.\r\n                Example: servo(90). Enables servo 2 PWM only.\r\n  servo(status) Show last target; -1 means not yet commanded.\r\n                Target is not measured position; stop disables PWM\r\n                but preserves this last target value.\r\n  servo()       Show this guide without moving.\r\n\r\n");
+    reply("%s", "DC MOTOR\r\n  motor(duty)   Set duty from -100 to +100 percent. Positive is\r\n                forward, negative reverse, and zero stops the motor.\r\n                Examples: motor(30), motor(-30), motor(0).\r\n  motor(stop)   Stop DC motor. During run, stops the whole robot.\r\n                motor(0) has the same stopping behavior.\r\n  motor(status) Show signed duty; negative indicates reverse.\r\n  motor()       Show this guide without moving.\r\n\r\n");
+    reply("%s", "STEPPER\r\n  stepper(steps)    Move a signed number of STEP pulses, then stop.\r\n                    Positive goes toward SW4; negative toward SW1.\r\n                    Range: -1000000..-1 or 1..1000000.\r\n                    Examples: stepper(20), stepper(-20).\r\n                    Stops early at its target limit. Stop any current\r\n                    stepper motion before starting a counted move.\r\n  stepper(speed,n)  Set nominal speed, 16..2000 steps/second.\r\n                    Example: stepper(speed,100). Must be stopped;\r\n                    setting speed does not start movement.\r\n");
+    reply("%s", "  stepper(auto)     Travel continuously between SW1 and SW4.\r\n                    Replaces a counted move; leaves DC duty unchanged.\r\n  stepper(stop)     Stop stepper and cancel pending steps/auto.\r\n                    During run, stops the whole robot.\r\n  stepper(status)   Show mode, target switch, speed and steps remaining.\r\n  stepper()         Show this guide without moving.\r\n\r\n");
+    reply("%s", "MOTION RULES\r\n  PC11/SW2: press to run, press again to stop (30 ms debounce).\r\n  Release between presses; held at reset requires release first.\r\n  No startup interlock; UART commands work immediately.\r\n  During run, send stop before individual movement/speed commands.\r\n  SW1 and SW4 pressed together latch a fault: correct cause and reset.\r\n  IDLE means no full autonomous program; individual motors may move.\r\n  After stop, another accepted movement command can resume motion.\r\n\r\n");
+}
+
+static char *trim(char *text)
+{
+    while (*text == ' ' || *text == '\t') ++text;
+    char *end = text + strlen(text);
+    while (end > text && (end[-1] == ' ' || end[-1] == '\t')) --end;
+    *end = '\0';
+    return text;
+}
+
 static void command(void)
 {
-    char *words[4];
-    unsigned count = 0;
-    char *p = line;
-    while (*p) {
-        while (*p == ' ' || *p == '\t') ++p;
-        if (!*p) break;
-        if (count == 4) { reply("ERROR: TOO MANY PARAMETERS\r\n"); return; }
-        words[count++] = p;
-        while (*p && *p != ' ' && *p != '\t') { *p = (char)toupper((unsigned char)*p); ++p; }
-        if (*p) *p++ = '\0';
-    }
-    if (!count) return;
-    int32_t a, b;
+    char *words[3];
+    unsigned count = 1;
+    char *text = trim(line);
+    if (!*text) return;
+    for (char *p = text; *p; ++p) *p = (char)toupper((unsigned char)*p);
+    words[0] = text;
+    char *open = strchr(text, '(');
+    if (open) {
+        *open = '\0';
+        words[0] = trim(text);
+        char *args = open + 1;
+        char *close = strchr(args, ')');
+        if (!close || *trim(close + 1) || strchr(args, '(')) goto syntax_error;
+        *close = '\0';
+        args = trim(args);
+        if (strcmp(words[0], "SERVO") && strcmp(words[0], "MOTOR") &&
+            strcmp(words[0], "STEPPER")) goto syntax_error;
+        if (!*args) { help(); return; }
+        char *comma = strchr(args, ',');
+        if (comma) {
+            *comma = '\0';
+            words[2] = trim(comma + 1);
+            if (!*words[2] || strchr(words[2], ',')) goto syntax_error;
+            count = 3;
+        } else count = 2;
+        words[1] = trim(args);
+        if (!*words[1]) goto syntax_error;
+    } else if (strpbrk(text, "() ,\t")) goto syntax_error;
+    int32_t a;
     if (!strcmp(words[0], "PING") && count == 1) reply("OK PONG\r\n");
-    else if (!strcmp(words[0], "HELP") && count == 1)
-        reply("AVAILABLE COMMANDS:\r\nPING | HELP | STATUS | RUN | STOP | LIMITS\r\n"
-              "STEPPER <signed steps> | SPEED <16..2000> | AUTO | STOP | STATUS\r\n"
-              "SERVO <1|2> <0..120> | STATUS\r\nMOTOR <0..100> | STOP | STATUS\r\n"
-              "RUN locks individual motion commands; send STOP first.\r\n");
+    else if (!strcmp(words[0], "HELP") && count == 1) help();
     else if (!strcmp(words[0], "STATUS") && count == 1) status();
     else if (!strcmp(words[0], "LIMITS") && count == 1) limits();
     else if (!strcmp(words[0], "STOP") && count == 1) {
@@ -162,21 +196,24 @@ static void command(void)
         else if (count == 2 && number(words[1], &a)) result(Robot_Move(a), "STEPPER MOVE STARTED");
         else if (count == 3 && !strcmp(words[1], "SPEED") && number(words[2], &a))
             result(Robot_SetSpeed((uint32_t)a), "STEPPER SPEED SET");
-        else reply("ERROR: USE STEPPER <steps>|SPEED <16..2000>|AUTO|STOP|STATUS\r\n");
+        else reply("ERROR: use stepper(steps), stepper(speed,16..2000), stepper(auto|stop|status)\r\n");
     } else if (!strcmp(words[0], "MOTOR")) {
-        if (count == 2 && !strcmp(words[1], "STATUS")) reply("DC MOTOR: %u%%\r\n", Robot_GetStatus()->duty);
+        if (count == 2 && !strcmp(words[1], "STATUS")) reply("DC MOTOR: %d%%\r\n", Robot_GetStatus()->duty);
         else if (count == 2 && !strcmp(words[1], "STOP")) {
             Robot_StopMotor(); result(NULL, "MOTOR STOPPED (RUN CANCELLED IF ACTIVE)");
-        } else if (count == 2 && number(words[1], &a)) result(Robot_SetMotor((unsigned)a), "MOTOR DUTY SET");
-        else reply("ERROR: USE MOTOR <0..100>|STOP|STATUS\r\n");
+        } else if (count == 2 && number(words[1], &a)) result(Robot_SetMotor((int)a), "MOTOR DUTY SET");
+        else reply("ERROR: use motor(-100..100), motor(stop), motor(status)\r\n");
     } else if (!strcmp(words[0], "SERVO")) {
         if (count == 2 && !strcmp(words[1], "STATUS"))
-            reply("SERVO TARGETS: 1=%d 2=%d DEG (-1=UNCOMMANDED; STOP DISABLES PWM)\r\n",
-                  Robot_GetStatus()->servo_angle[0], Robot_GetStatus()->servo_angle[1]);
-        else if (count == 3 && number(words[1], &a) && number(words[2], &b))
-            result(Robot_SetServo((unsigned)a, (unsigned)b), "SERVO TARGET SET");
-        else reply("ERROR: USE SERVO <1|2> <0..120>|STATUS\r\n");
-    } else reply("ERROR: UNKNOWN COMMAND OR INVALID PARAMETERS\r\nTYPE HELP FOR AVAILABLE COMMANDS\r\n");
+            reply("SERVO 2 TARGET: %d DEG (-1=UNCOMMANDED; stop DISABLES PWM)\r\n",
+                  Robot_GetStatus()->servo_angle[1]);
+        else if (count == 2 && number(words[1], &a))
+            result(Robot_SetServo(2U, (unsigned)a), "SERVO 2 TARGET SET");
+        else reply("ERROR: use servo(0..120) or servo(status)\r\n");
+    } else {
+syntax_error:
+        reply("ERROR: UNKNOWN COMMAND OR INVALID PARAMETERS\r\nType help for available commands\r\n");
+    }
 }
 
 void Serial_Update(void)
