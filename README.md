@@ -30,6 +30,14 @@ The project is now saved locally in `METR4810-Team2`.
 4. Select the repository's `METR4810_Team2_code` folder and click **Finish**.
 5. Click **Build** (hammer icon).
 
+The project file to open/import in STM32CubeIDE is:
+
+```text
+<your clone folder>\METR4810-Team2\METR4810_Team2_code\.project
+```
+
+Select the folder containing this `.project` when importing. Leave **Copy projects into workspace** unchecked. Do not open a project copy inside `build` or `usart1-test`.
+
 Note: TBH, This is very simplifed there is likely a bit more setup to this, where you have to sort out your workspace, use google/AI for help
 
 ## 3. Flash the PCB
