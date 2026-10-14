@@ -10,5 +10,7 @@ void Stepper1_SetSpeed(uint32_t speed);
 void Stepper1_Move(uint8_t direction, uint32_t steps);
 uint8_t Stepper1_IsBusy(void);
 uint32_t Stepper1_Remaining(void);
+/* Cumulative emitted STEP pulses, including continuous motion; wraps at UINT32_MAX. */
+uint32_t Stepper1_TotalPulses(void);
 
 #endif

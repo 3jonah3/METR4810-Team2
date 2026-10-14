@@ -3,12 +3,7 @@
 
 static TIM_HandleTypeDef *servoTimer = NULL;
 
-/*
- * Starting pulse limits, NOT specified by the supplied datasheet.
- * Calibrate each servo separately if the measured travel differs.
- */
-static const uint16_t minPulseUs[2] = {1000, 1000};
-static const uint16_t maxPulseUs[2] = {2000, 2000};
+/* Nominal 0-180 degree mapping for the 500-2500 us servos. */
 
 static const uint32_t channels[2] = {
     TIM_CHANNEL_2,  // Servo 1: PB7
@@ -24,15 +19,21 @@ HAL_StatusTypeDef servo(uint8_t servo_ID, int angle)
         return HAL_ERROR;
     }
 
-    uint8_t index = servo_ID - 1;
-
-    uint32_t pulseUs = minPulseUs[index]
+    uint32_t pulseUs = SERVO_MIN_PULSE_US
         + ((uint32_t)angle *
-           (maxPulseUs[index] - minPulseUs[index])
+           (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US)
            + SERVO_MAX_ANGLE / 2) / SERVO_MAX_ANGLE;
 
+    return Servo_SetPulseUs(servo_ID, pulseUs);
+}
+
+HAL_StatusTypeDef Servo_SetPulseUs(uint8_t servo_ID, unsigned pulse_us)
+{
+    if (!servoTimer || servo_ID < 1 || servo_ID > 2 ||
+        pulse_us < SERVO_MIN_PULSE_US || pulse_us > SERVO_MAX_PULSE_US)
+        return HAL_ERROR;
     // Existing TIM4 configuration: 1 timer count = 1 microsecond.
-    __HAL_TIM_SET_COMPARE(servoTimer, channels[index], pulseUs);
+    __HAL_TIM_SET_COMPARE(servoTimer, channels[servo_ID - 1], pulse_us);
 
     return HAL_OK;
 }
@@ -47,8 +48,8 @@ void Servo_Init(TIM_HandleTypeDef *timer)
 
     servoTimer = timer;
 
-    // Centre is now 60° within a nominal 0–120° range.
-    if (servo(1, 60) != HAL_OK || servo(2, 60) != HAL_OK)
+    // Centre is 90 degrees (1500 us); PWM stays off until explicitly started.
+    if (servo(1, 90) != HAL_OK || servo(2, 90) != HAL_OK)
     {
         Error_Handler();
         return;

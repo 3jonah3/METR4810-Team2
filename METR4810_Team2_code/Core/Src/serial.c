@@ -22,6 +22,7 @@ static volatile unsigned tx_tail, tx_active;
 static unsigned tx_head, tx_dropped;
 static char line[LINE_SIZE];
 static unsigned line_length, discard_line;
+static uint32_t reported_turn;
 static void help(void);
 
 /* Main-loop producer, interrupt consumer. Never wait for transmission. */
@@ -57,6 +58,7 @@ void Serial_Init(UART_HandleTypeDef *uart)
     rx_head = rx_tail = rx_fault = 0;
     tx_head = tx_tail = tx_active = tx_dropped = 0;
     line_length = discard_line = 0;
+    reported_turn = Robot_GetStatus()->turn_number;
     if (HAL_UART_Receive_IT(port, &rx_byte, 1) != HAL_OK) rx_fault = 1;
     reply("\r\nWelcome to METR4810 Team 2 CLI\r\n\r\n ,_,\r\n(O,O)\r\n(   )\r\n-\"-\"------\r\n\r\nREADY: IDLE; type help\r\n\r\n");
     help();
@@ -122,6 +124,11 @@ static void status(void)
           Switch_IsPressed(2) ? "PRESSED" : "RELEASED", tx_dropped);
     step_status();
     limits();
+    reply("DEMO: %s; POSITION FROM SW4: %lu STEPS; SERVO 2: %d US\r\n",
+          s->state != ROBOT_RUNNING ? "INACTIVE" : s->demo_homing ? "HOMING SW4" : "FOLLOWING TABLE",
+          (unsigned long)s->demo_position, s->servo_pulse_us[1]);
+    reply("PATH: OUTWARD END=%lu; RETURN PULSES=%lu; LAST HOME ERROR=%ld STEPS\r\n",
+          (unsigned long)s->outward_steps, (unsigned long)s->return_steps, (long)s->home_step_error);
 }
 
 static void result(const char *error, const char *success)
@@ -132,8 +139,8 @@ static void result(const char *error, const char *success)
 static void help(void)
 {
     reply("%s", "available commands:\r\nType one command and press Enter. Commands ignore letter case.\r\nUse whole numbers for angles, duty, steps and speed.\r\n\r\nGENERAL\r\n  help       Show this full command guide.\r\n  ping       Test the serial link; replies OK PONG.\r\n  status     Show robot state, stepper mode/target/speed/remaining,\r\n             signed motor duty, limits, run button and faults.\r\n             Also reports dropped serial response fragments.\r\n  limits     Read SW1-SW4: 1=pressed, 0=released; SW2 is PC11.\r\n\r\n");
-    reply("%s", "AUTONOMOUS CONTROL\r\n  run        Start DC motor at +100% and stepper travel between\r\n             SW1 and SW4. Reverse at each limit after 30 ms debounce.\r\n             Continues until stop or a fault; run can restart it.\r\n  stop       Stop DC motor and stepper, cancel pending moves/auto,\r\n             disable servo PWM, and enter STOPPED. UART stays active.\r\n             This is a software stop, not a hardware emergency stop.\r\n\r\n");
-    reply("%s", "SERVO (physical servo 2 only, PB6)\r\n  servo(angle)  Set target angle from 0 to 120 degrees.\r\n                Example: servo(90). Enables servo 2 PWM only.\r\n  servo(status) Show last target; -1 means not yet commanded.\r\n                Target is not measured position; stop disables PWM\r\n                but preserves this last target value.\r\n  servo()       Show this guide without moving.\r\n\r\n");
+    reply("%s", "AUTONOMOUS CONTROL\r\n  run        Home to SW4 first (DC off, servo 2 at 1500 us).\r\n             Then push toward SW1 (DC -100%), return to SW4 (DC +100%).\r\n             Servo 2 follows the step-position table both ways.\r\n             Uses CLI-selected speed; repeats until stop or fault.\r\n  stop       Stop DC motor and stepper, cancel pending moves/auto,\r\n             disable servo PWM, and enter STOPPED. UART stays active.\r\n             This is a software stop, not a hardware emergency stop.\r\n\r\n");
+    reply("%s", "SERVO (physical servo 2 only, PB6)\r\n  servo(angle)  Set target angle from 0 to 180 degrees.\r\n                Example: servo(90). Enables servo 2 PWM only.\r\n  servo(1500u) Set pulse width, 500..2500 us (servo 2 only).\r\n  servo(status) Show target degrees and us; -1=uncommanded.\r\n                Target is not measured position; stop disables PWM\r\n                but preserves this last target value.\r\n  servo()       Show this guide without moving.\r\n\r\n");
     reply("%s", "DC MOTOR\r\n  motor(duty)   Set duty from -100 to +100 percent. Positive is\r\n                forward, negative reverse, and zero stops the motor.\r\n                Examples: motor(30), motor(-30), motor(0).\r\n  motor(stop)   Stop DC motor. During run, stops the whole robot.\r\n                motor(0) has the same stopping behavior.\r\n  motor(status) Show signed duty; negative indicates reverse.\r\n  motor()       Show this guide without moving.\r\n\r\n");
     reply("%s", "STEPPER\r\n  stepper(steps)    Move a signed number of STEP pulses, then stop.\r\n                    Positive goes toward SW4; negative toward SW1.\r\n                    Range: -1000000..-1 or 1..1000000.\r\n                    Examples: stepper(20), stepper(-20).\r\n                    Stops early at its target limit. Stop any current\r\n                    stepper motion before starting a counted move.\r\n  stepper(speed,n)  Set nominal speed, 16..2000 steps/second.\r\n                    Example: stepper(speed,100). Must be stopped;\r\n                    setting speed does not start movement.\r\n");
     reply("%s", "  stepper(auto)     Travel continuously between SW1 and SW4.\r\n                    Replaces a counted move; leaves DC duty unchanged.\r\n  stepper(stop)     Stop stepper and cancel pending steps/auto.\r\n                    During run, stops the whole robot.\r\n  stepper(status)   Show mode, target switch, speed and steps remaining.\r\n  stepper()         Show this guide without moving.\r\n\r\n");
@@ -187,7 +194,7 @@ static void command(void)
     else if (!strcmp(words[0], "STOP") && count == 1) {
         Robot_Stop(); result(NULL, "ROBOT STOPPED\r\nDC MOTOR: OFF\r\nSTEPPER: STOPPED");
     } else if (!strcmp(words[0], "RUN") && count == 1)
-        result(Robot_StartAuto(), "AUTONOMOUS MODE STARTED\r\nDC MOTOR: 100%\r\nSTEPPER: AUTO");
+        result(Robot_StartAuto(), "AUTONOMOUS RUN ACTIVE; use status for phase and position");
     else if (!strcmp(words[0], "STEPPER")) {
         if (count == 2 && !strcmp(words[1], "STATUS")) step_status();
         else if (count == 2 && !strcmp(words[1], "STOP")) {
@@ -205,11 +212,17 @@ static void command(void)
         else reply("ERROR: use motor(-100..100), motor(stop), motor(status)\r\n");
     } else if (!strcmp(words[0], "SERVO")) {
         if (count == 2 && !strcmp(words[1], "STATUS"))
-            reply("SERVO 2 TARGET: %d DEG (-1=UNCOMMANDED; stop DISABLES PWM)\r\n",
-                  Robot_GetStatus()->servo_angle[1]);
+            reply("SERVO 2 TARGET: %d DEG (NOMINAL), %d US (-1=UNCOMMANDED; stop DISABLES PWM)\r\n",
+                  Robot_GetStatus()->servo_angle[1], Robot_GetStatus()->servo_pulse_us[1]);
+        else if (count == 2 && strlen(words[1]) > 1 && words[1][strlen(words[1]) - 1] == 'U') {
+            words[1][strlen(words[1]) - 1] = '\0';
+            if (number(words[1], &a))
+                result(Robot_SetServoPulseUs(2U, (unsigned)a), "SERVO 2 PULSE SET");
+            else reply("ERROR: use servo(500u..2500u)\r\n");
+        }
         else if (count == 2 && number(words[1], &a))
             result(Robot_SetServo(2U, (unsigned)a), "SERVO 2 TARGET SET");
-        else reply("ERROR: use servo(0..120) or servo(status)\r\n");
+        else reply("ERROR: use servo(0..180), servo(500u..2500u), or servo(status)\r\n");
     } else {
 syntax_error:
         reply("ERROR: UNKNOWN COMMAND OR INVALID PARAMETERS\r\nType help for available commands\r\n");
@@ -254,6 +267,13 @@ void Serial_Update(void)
                 reply("ERROR: INVALID/OVERLONG LINE; ROBOT STOPPED; LINE DISCARDED\r\n");
             } else line[line_length++] = (char)ch;
         }
+    }
+    const RobotStatus *s = Robot_GetStatus();
+    if (reported_turn != s->turn_number) {
+        reported_turn = s->turn_number;
+        reply("TURN: SW%u; POSITION=%lu; SERVO=%u US; NEXT=SW%u; DC=%d%%; HOME ERROR=%ld\r\n",
+              s->turn_switch, (unsigned long)s->turn_position, s->turn_pulse_us,
+              s->target, s->duty, (long)s->home_step_error);
     }
     transmit();
 }

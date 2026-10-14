@@ -4,6 +4,7 @@
 static TIM_HandleTypeDef *stepTimer = NULL;
 static volatile uint8_t running = 0;
 static volatile uint32_t remaining;
+static volatile uint32_t total_pulses;
 
 void Stepper1_Init(TIM_HandleTypeDef *timer)
 {
@@ -16,6 +17,7 @@ void Stepper1_Init(TIM_HandleTypeDef *timer)
     stepTimer = timer;
     running = 0;
     remaining = 0;
+    total_pulses = 0;
 
     // Keep the pulse output stopped until Start() is called.
     if (HAL_TIM_PWM_Stop(stepTimer, TIM_CHANNEL_1) != HAL_OK)
@@ -52,9 +54,14 @@ void Stepper1_Start(uint8_t direction)
 
     __HAL_TIM_SET_COUNTER(stepTimer, 0);
 
-    /* Continuous travel uses the original PWM1 waveform. */
+    /* PWM2 starts LOW. Each overflow completes one hardware-generated pulse. */
     CLEAR_BIT(stepTimer->Instance->CR1, TIM_CR1_OPM);
-    MODIFY_REG(stepTimer->Instance->CCMR1, TIM_CCMR1_OC1M, TIM_OCMODE_PWM1);
+    MODIFY_REG(stepTimer->Instance->CCMR1, TIM_CCMR1_OC1M, TIM_OCMODE_PWM2);
+    remaining = 0;
+    __HAL_TIM_CLEAR_FLAG(stepTimer, TIM_FLAG_UPDATE);
+    HAL_NVIC_ClearPendingIRQ(TIM1_UP_TIM16_IRQn);
+    running = 1;
+    __HAL_TIM_ENABLE_IT(stepTimer, TIM_IT_UPDATE);
 
     if (HAL_TIM_PWM_Start(stepTimer, TIM_CHANNEL_1) != HAL_OK)
     {
@@ -72,8 +79,20 @@ void Stepper1_Stop(void)
         return;
     }
 
+    uint32_t mask = __get_PRIMASK();
+    __disable_irq();
+    CLEAR_BIT(stepTimer->Instance->CR1, TIM_CR1_CEN);
     __HAL_TIM_DISABLE_IT(stepTimer, TIM_IT_UPDATE);
+    if (running) {
+        /* Account for a pending overflow and a final rising edge before stopping. */
+        if (__HAL_TIM_GET_FLAG(stepTimer, TIM_FLAG_UPDATE)) ++total_pulses;
+        if (__HAL_TIM_GET_COUNTER(stepTimer) >= __HAL_TIM_GET_COMPARE(stepTimer, TIM_CHANNEL_1))
+            ++total_pulses;
+    }
+    __HAL_TIM_CLEAR_FLAG(stepTimer, TIM_FLAG_UPDATE);
+    running = 0;
     remaining = 0;
+    __set_PRIMASK(mask);
 
     if (HAL_TIM_PWM_Stop(stepTimer, TIM_CHANNEL_1) != HAL_OK)
     {
@@ -115,10 +134,14 @@ void Stepper1_Move(uint8_t direction, uint32_t steps)
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
 {
-    if (timer != stepTimer || !remaining) return;
-    if (--remaining == 0U) Stepper1_Stop();
-    else SET_BIT(timer->Instance->CR1, TIM_CR1_CEN);
+    if (timer != stepTimer || !running) return;
+    ++total_pulses;
+    if (remaining) {
+        if (--remaining == 0U) Stepper1_Stop();
+        else SET_BIT(timer->Instance->CR1, TIM_CR1_CEN);
+    }
 }
 
 uint8_t Stepper1_IsBusy(void) { return running; }
 uint32_t Stepper1_Remaining(void) { return remaining; }
+uint32_t Stepper1_TotalPulses(void) { return total_pulses; }
