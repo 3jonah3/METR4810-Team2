@@ -115,7 +115,7 @@ Type one command at a time and press **Enter**.
 | `ping` | Check the serial connection. |
 | `status` | Show robot state and actuator status. |
 | `limits` | Show switch states: 1 = pressed. |
-| `run` | Run the DC motor at 100% and move the stepper between its limits. |
+| `run` | Home to SW4, then repeat outward/return passes with the servo schedule and DC direction following travel. |
 | `stop` | Stop all motion and disable servo PWM. |
 
 ### Servo
@@ -124,8 +124,9 @@ All servo commands use **servo 2**.
 
 | Command | Action |
 |---|---|
-| `servo(90)` | Set angle; range **0–120 degrees**. |
-| `servo(status)` | Show the last target angle. |
+| `servo(90)` | Set angle; range **0–180 degrees**. |
+| `servo(1500u)` | Set pulse width directly; range **500–2500 microseconds**. |
+| `servo(status)` | Show nominal target angle and exact pulse width (not measured position). |
 | `servo()` | Show help. |
 
 ### DC motor
@@ -206,3 +207,64 @@ For more detail, see [SERIAL_CONTROL.md](METR4810_Team2_code/SERIAL_CONTROL.md).
 Create a new branch before making changes. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Ask Jonah if you have any questions.
+
+### Servo pulse widths in firmware
+
+The servo mapping is 0 degrees = 500 us, 90 degrees = 1500 us, and 180 degrees = 2500 us at 50 Hz. Startup keeps PWM off. The CLI controls servo 2 (PB6); `servo(90)` selects degrees and `servo(1500u)` selects microseconds. Send one command per line. `stop` disables PWM; individual commands are rejected during autonomous run or a latched fault.
+
+For C code using robot state and fault checks:
+
+```c
+Robot_SetServo(2, 90);             // Degrees; enables servo 2
+Robot_SetServoPulseUs(2, 1500);    // Microseconds; enables servo 2
+```
+
+Both functions return NULL on success or an error string. The low-level driver also provides `servo(2, 90)` and `Servo_SetPulseUs(2, 1500)`; these return HAL status and require `Servo_Start(2)` to enable output after initialization. In C, `1500u` is an unsigned integer, not a unit: use the separate pulse-width function. Angles are nominal; confirm the mechanism can accommodate the commanded travel.
+### Demo sequence (`run` or PC11/SW2)
+
+1. Home to **SW4 / PC15** with the DC motor off and servo 2 at **1500 us (90 degrees)**. If SW4 is already pressed, debounce it without driving farther into the limit.
+2. Set position to zero and push outward toward **SW1**, with DC duty **-100%**.
+3. At SW1, reverse the stepper and DC motor (**+100%**) and follow the servo schedule backwards on the return to SW4.
+4. At SW4, reset position to zero and repeat. `stop` or another run-button press stops everything. A new run always homes again.
+
+Run preserves the selected stepper speed (16–2000 pulses/s). Set it while stopped:
+
+```text
+stop
+stepper(speed,333)
+run
+status
+```
+
+333 is an example, not a demo speed setting. The existing startup default remains 500 pulses/s until changed; speed is not saved across reset. Position comes from emitted STEP pulses, not elapsed time or encoder feedback. Microstepping/mechanical calibration must match the supplied schedule. `status` reports homing/table phase, position from SW4, and servo pulse width.
+
+| Position from SW4 (pulses) | Servo 2 (us) |
+|---:|---:|
+| 0–59,200 | 1500 |
+| 70,000 | 1505 |
+| 80,000 | 1520 |
+| 90,000 | 1544 |
+| 100,000 | 1578 |
+| 110,000 | 1621 |
+| 120,000 | 1673 |
+| 130,000 | 1734 |
+| 131,800 | 1745 |
+| 140,000 | 1800 |
+| 145,000 | 1833 |
+
+Pulse widths are interpolated between adjacent rows and applied without a time-based ramp. The physical limit switches still trigger reversals; 145,000 is the table endpoint, not a forced reversal. Beyond it, the servo holds 1833 us until travel returns into the table. An earlier SW1 press reverses from the actual counted position. The SW4 return re-establishes zero every cycle. Independent `stepper(auto)` remains a stepper-only test and does not activate this servo/DC schedule.
+### Checking the return path
+
+The drill polarity for the demo is now **-100% outward toward SW1**, **+100% returning toward SW4**. Initial homing keeps the DC motor off. Manual `motor(duty)` commands retain their signed-duty meaning.
+
+The return uses a fixed reference captured at the actual SW1 turnaround: `position = outward endpoint - pulses emitted on return`. An early SW1 press therefore retraces the part of the schedule reached, not a fresh path from 145,000. Brief switch bounce pauses and resumes without changing the reference. Both directions use the same position-to-pulse table and the selected CLI speed.
+
+Each confirmed demo limit produces a serial line such as:
+
+```text
+TURN: SW1; POSITION=145000; SERVO=1833 US; NEXT=SW4; DC=100%; HOME ERROR=0
+```
+
+`status` also shows `OUTWARD END`, `RETURN PULSES`, and `LAST HOME ERROR`. Home error is the outward pulse count minus the return pulse count when SW4 triggers (positive = fewer pulses on return). These are commanded pulses, not encoder measurements. Counts can reveal switch-position differences, but cannot directly detect mechanical backlash, servo lag, or missed motor steps. An outward endpoint beyond 145,000 still has the original final-angle plateau; the TURN report makes that visible. Do not shift only the return table: that would deliberately command a different path.
+
+For a return mismatch, capture the TURN line at SW1 and `status` shortly afterward while retracting. Compare the reported servo target to the observed mechanism before changing angle calibration or compensating for backlash.
