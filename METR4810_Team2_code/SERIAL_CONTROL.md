@@ -11,8 +11,8 @@ The serial interface is temporarily moved from USART3 (PB10/PB11) to the existin
 | STEP | PB4, TIM16 CH1 | 1 MHz timer, initially 500 steps/s |
 | DIR | PA4 | LOW toward SW4; HIGH toward SW1 |
 | DC motor | PA8/PA9, TIM1 CH1/CH2 | Existing driver, 1 kHz PWM |
-| Servo 1 | PB7, TIM4 CH2 | 50 Hz, 0–120 degrees |
-| Servo 2 | PB6, TIM4 CH1 | 50 Hz, 0–120 degrees |
+| Servo 1 | PB7, TIM4 CH2 | 50 Hz, 0–180 degrees (500–2500 us) |
+| Servo 2 | PB6, TIM4 CH1 | 50 Hz, 0–180 degrees (500–2500 us) |
 | SW1 / SW4 | PC14 / PC15 | Active LOW, internal pull-ups |
 | Run/stop / SW2 | PC11 | Active LOW, internal pull-up |
 | SW3 | PC10 | Active LOW, internal pull-up |
@@ -43,19 +43,23 @@ must be released and pressed again before it can start motion. UART and button
 controls share state: either can stop a run started by the other. From individual
 actuator operation (IDLE), a button press starts the full autonomous program.
 
-`run` starts the DC motor at 100% and the existing SW1/SW4 travel sequence together.
-The first target is SW4 unless SW4 is already pressed. At each target press, STEP
-stops immediately; after 30 ms, a still-pressed switch reverses the target and a
-false press resumes toward the same target. This debounce is nonblocking.
+`run` does one cycle. It homes to SW4 with the DC motor off, drives out to SW1 with
+DC at -100%, reverses at SW1 and returns with DC at +100%, then stops at SW4 and
+prints `RUN COMPLETE`. If SW4 is already pressed at the start, the carriage first
+backs off 1500 steps toward SW1; SW4 must then read released, or a fault latches.
+At each target press STEP stops immediately. After 30 ms a still-pressed switch
+counts and a false press resumes toward the same target. This debounce is
+nonblocking. The README describes the servo steering schedule and the run feedback.
 
-`stop` cancels all stepper activity, sets DC duty to zero, disables both servo PWM
-outputs, and enters STOPPED. The next accepted movement command can resume motion.
-RUN is restartable and repeated RUN during RUNNING does not reset travel.
-Stopping servo PWM stops commands but cannot guarantee an immediate mechanical stop
-or holding torque; retained servo targets are historical targets, not feedback.
+`stop` cancels all stepper activity, sets DC duty to zero and enters STOPPED. The
+servo PWM keeps running at its last target, so the pod holds its angle: switching
+the PWM off mid-pulse can throw the servo past its limit. `pause` freezes a run the
+same way but keeps it, and `continue` resumes it on the same leg. The next accepted
+movement command can resume motion. Repeated RUN during RUNNING does not reset
+travel. Servo targets are commanded positions, not feedback.
 
 Simultaneous SW1 and SW4 activation latches a fault in every operating mode and stops
-all motors. Releasing the switches or sending STOP does not clear it. Correct the
+all motors. So does SW4 still reading pressed after the run-start back-off. Releasing the switches or sending STOP does not clear it. Correct the
 cause and reset. Both button and UART starts respect this latched fault. Manual motion stops early at its target limit; moving
 away from one pressed limit is allowed.
 
@@ -126,7 +130,9 @@ and tabs around names and arguments are accepted, e.g. `motor( -50 )`. Extra par
 | `help` | Command list |
 | `status` | System state, stepper mode/target/speed/remaining count, DC duty, limits, fault, PC11 button state, dropped TX response count |
 | `limits` | SW1–SW4; 1 means pressed |
-| `run` / `stop` | Start full existing autonomous operation / stop everything |
+| `run` / `stop` | One autonomous cycle (see above) / stop everything; the servo holds its angle |
+| `pause` / `continue` | Freeze a run in place / resume it from where it stopped |
+| `telemetry(on)` / `telemetry(off)` / `telemetry(250)` | CSV `DATA` rows during a run: on, off, or every N ms (100–10000) |
 | `stepper(200)` / `stepper(-200)` | 200 pulses toward SW4 / SW1 |
 | `stepper(speed,500)` | Set nominal speed, 16–2000 steps/s; stepper must be stopped |
 | `stepper(auto)` / `stepper(stop)` / `stepper(status)` | Standalone automatic travel / stop / inspect |
@@ -144,11 +150,12 @@ automatic travel still uses the original PWM1 waveform. Integer timer division a
 quantizes speed. Counts describe electrical STEP pulses, not encoder-confirmed
 mechanical displacement; stalls, STOP, or limits can prevent completing a move.
 
-The original servo conversion is retained: 0–120 degrees maps to 1000–2000 microseconds,
-with rounding; 60 degrees is 1500 microseconds. These pulse limits were provisional
-in the existing driver and still require calibration on the actual servos.
+Servo angles map 0–180 degrees onto 500–2500 microseconds, with rounding; 90 degrees
+is 1500 microseconds and the pod is straight there. With the pod fitted, keep servo 2
+within 1032–1968 us: the keeper pocket allows only 23.5 degrees of pod at 20 us per
+degree. The autonomous run caps itself there; manual `servo(...)` commands do not.
 
-RX uses a 256-byte ring; commands have at most 95 characters; TX uses a 4096-byte ring.
+RX uses a 256-byte ring; commands have at most 95 characters; TX uses an 8192-byte ring.
 No dynamic allocation is used by application modules. Callbacks only buffer bytes,
 complete TX, signal UART errors, or count/rearm pulses. Parsing and control run in
 the main loop. TX never blocks STOP processing. If responses saturate TX, whole
@@ -175,8 +182,9 @@ backspace control bytes; they are deliberately rejected by the firmware.
    it must not toggle repeatedly. Release and press again: all motion must stop.
    Reset while holding it: remain idle until release and a fresh press. Also test
    UART `run` followed by button stop, and button run followed by UART `stop`.
-4. In a clear, secured mechanism, send the sequence below. Verify the DC motor and
-   stepper run together, reverse at both limits, stop, and restart without reset.
+4. In a clear, secured mechanism, send the sequence below. Verify one cycle: home to
+   SW4, out to SW1 and back, then `RUN COMPLETE`. Also verify stop mid-run and a
+   restart without reset.
 
    ```text
    run
@@ -190,8 +198,9 @@ backspace control bytes; they are deliberately rejected by the firmware.
 5. Send STOP during travel, during the 30 ms limit debounce, and while holding either
    limit. Confirm no later autonomous restart. Try individual movement commands
    during run; expect rejection. Try `motor(stop)` and `stepper(stop)` during run; both
-   must cancel the entire program. Start RUN with SW4 pressed; first travel must
-   be toward SW1. Simulate a brief switch bounce; resume toward the original target.
+   must cancel the entire program. Start RUN with SW4 pressed: it must back off 1500
+   steps toward SW1, then home back to SW4 before heading out. Simulate a brief switch
+   bounce; resume toward the original target. Pause and continue on each leg.
 6. With the stepper stopped, set speed to 500, then issue `stepper(1)`, `stepper(200)`,
    `stepper(-200)` with sufficient free travel. Count rising edges on PB4 using a
    logic analyzer: exactly 1, 200, 200 unless interrupted by STOP or a limit.
@@ -199,9 +208,10 @@ backspace control bytes; they are deliberately rejected by the firmware.
    LOW idle, DIR setup time, clean first/last pulses, no extra edges after STOP,
    and no lost mechanical steps. STOP mid-move and verify REMAINING becomes zero.
 7. Test `motor(50)`, `motor(-50)`, `motor(100)`, `motor(-100)`, `motor(stop)`, and `motor(status)`. Verify the physical direction and signed duty in status; use low duty initially with the mechanism clear. Test servo targets
-   0, 60, 90, 120 on physical servo 2, then STOP. Measure 50 Hz and pulse widths
-   1000, 1500, 1750, 2000 microseconds. Verify initialization does not move either
-   servo; validate safe mechanical endpoints before exercising the full range.
+   `servo(90)`, `servo(1700u)` and `servo(1968u)` on physical servo 2, then STOP: the
+   servo must keep holding. Measure 50 Hz and pulse widths of 1500, 1700 and 1968
+   microseconds. Verify initialization does not move either servo; with the pod
+   fitted, stay within 1032–1968 us.
 8. Test lowercase commands, CR-only, LF-only, and CRLF (one reply per command).
    Try `stepper(speed,-100)`, `servo(200)`, `motor(101)`, `motor(-101)`, `servo(1,90)`,
    `STEPPER`, `motor(50x)`, a huge integer, `RUN extra`, and `UNKNOWN`.
@@ -217,8 +227,8 @@ backspace control bytes; they are deliberately rejected by the firmware.
 Measure worst-case STOP-to-STEP-low latency under command traffic; no hard real-time
 latency is claimed from host tests. The only intentional motion-path delay remaining
 is the existing driver's 1 ms DIR setup (HAL tick rounding can make it slightly longer).
-There is no homing timeout or broken-switch detection beyond the original dual-limit
-fault; those are outside this requested autonomous sequence.
+Apart from the dual-limit fault and the SW4 check at run start, there is no homing
+timeout or broken-switch detection.
 
 ## Files, building, regeneration, and validation
 
@@ -261,7 +271,7 @@ METR4810_Team2_code/build/test_control
 In CubeIDE refresh the project and use Project → Clean then Build Project, so its
 managed build discovers new `.c` files. Do not rely on old Debug makefiles or ELF.
 The standalone build compiles and links with the installed GCC 14.3.rel1 and existing
-linker script. No hardware was flashed during development.
+linker script.
 
 Custom main.c calls are inside USER CODE blocks; HAL callbacks live in separate
 files. The `.ioc` has KeepUserCode enabled and owns peripheral/IRQ configuration.
@@ -272,7 +282,7 @@ After future regeneration, inspect the diff, rebuild, rerun host tests, and repe
 at least the idle/button/RUN/STOP hardware tests. Do not move custom code outside
 USER CODE blocks or define duplicate HAL UART/timer callbacks.
 
-Development validation: ARM firmware compile/link passed with `-Wall -Wextra`;
-host regression suite passed 861 checks. Physical wiring, electrical pulse accuracy,
+Development validation: ARM firmware compile/link passes with `-Wall -Wextra`. The
+host regression suite passes with `LIMIT_OVERTRAVEL_STEPS` at 0 and at 1500. Physical wiring, electrical pulse accuracy,
 servo calibration, switch noise, direction, motor dynamics, and worst-case stop
 latency remain to be validated on the actual PCB.

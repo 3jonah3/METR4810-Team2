@@ -66,8 +66,11 @@ HAL_StatusTypeDef Servo_Start(uint8_t servo_ID)
     uint32_t channel = channels[servo_ID - 1];
     if (TIM_CHANNEL_STATE_GET(servoTimer, channel) == HAL_TIM_CHANNEL_STATE_BUSY)
         return HAL_OK;
-    /* Apply preloaded target before enabling an inactive channel. */
-    HAL_TIM_GenerateEvent(servoTimer, TIM_EVENTSOURCE_UPDATE);
+    /* Load the preloaded target before enabling, but only while TIM4 is idle: an update
+       event resets the counter and would stretch a pulse on a servo that is running. */
+    if (TIM_CHANNEL_STATE_GET(servoTimer, channels[0]) != HAL_TIM_CHANNEL_STATE_BUSY &&
+        TIM_CHANNEL_STATE_GET(servoTimer, channels[1]) != HAL_TIM_CHANNEL_STATE_BUSY)
+        HAL_TIM_GenerateEvent(servoTimer, TIM_EVENTSOURCE_UPDATE);
     return HAL_TIM_PWM_Start(servoTimer, channel);
 }
 

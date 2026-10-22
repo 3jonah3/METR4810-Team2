@@ -72,11 +72,12 @@ void Stepper1_Start(uint8_t direction)
     running = 1;
 }
 
-void Stepper1_Stop(void)
+uint32_t Stepper1_StopRemaining(void)
 {
+    uint32_t left = 0;
     if (stepTimer == NULL)
     {
-        return;
+        return 0;
     }
 
     uint32_t mask = __get_PRIMASK();
@@ -84,10 +85,17 @@ void Stepper1_Stop(void)
     CLEAR_BIT(stepTimer->Instance->CR1, TIM_CR1_CEN);
     __HAL_TIM_DISABLE_IT(stepTimer, TIM_IT_UPDATE);
     if (running) {
-        /* Account for a pending overflow and a final rising edge before stopping. */
-        if (__HAL_TIM_GET_FLAG(stepTimer, TIM_FLAG_UPDATE)) ++total_pulses;
-        if (__HAL_TIM_GET_COUNTER(stepTimer) >= __HAL_TIM_GET_COMPARE(stepTimer, TIM_CHANNEL_1))
+        /* Account for a pending overflow and a final rising edge before stopping.
+           Each pulse counted here is also one fewer left in a counted move. */
+        left = remaining;
+        if (__HAL_TIM_GET_FLAG(stepTimer, TIM_FLAG_UPDATE)) {
             ++total_pulses;
+            if (left) --left;
+        }
+        if (__HAL_TIM_GET_COUNTER(stepTimer) >= __HAL_TIM_GET_COMPARE(stepTimer, TIM_CHANNEL_1)) {
+            ++total_pulses;
+            if (left) --left;
+        }
     }
     __HAL_TIM_CLEAR_FLAG(stepTimer, TIM_FLAG_UPDATE);
     running = 0;
@@ -97,10 +105,16 @@ void Stepper1_Stop(void)
     if (HAL_TIM_PWM_Stop(stepTimer, TIM_CHANNEL_1) != HAL_OK)
     {
         Error_Handler();
-        return;
+        return 0;
     }
 
     running = 0;
+    return left;
+}
+
+void Stepper1_Stop(void)
+{
+    (void)Stepper1_StopRemaining();
 }
 
 void Stepper1_SetSpeed(uint32_t speed)
