@@ -126,12 +126,13 @@ All servo commands use **servo 2**.
 
 | Command | Action |
 |---|---|
-| `servo(90)` | Set angle; range **0–180 degrees**. |
-| `servo(1500u)` | Set pulse width directly; range **500–2500 microseconds**. |
+| `servo(95)` | Set angle; range **0–180 degrees**. 95 degrees is the centre, where the pod is straight. |
+| `servo(1556u)` | Set pulse width directly; range **500–2500 microseconds**. 1556 us is the centre. |
+| `servo(arc)` | Arc test: sweep the run's arc from 95 to 135 degrees over 4 s, hold 1 s, and sweep back over 4 s. Nothing else moves. It ends holding at 95 degrees; `stop` aborts it and the servo holds where it is. |
 | `servo(status)` | Show nominal target angle and exact pulse width (not measured position). |
 | `servo()` | Show help. |
 
-With the pod fitted, keep servo 2 within **1032–1968 us** (about ±23.4 degrees of pod). The keeper pocket only allows 23.5 degrees. The autonomous run caps itself there; manual `servo(...)` commands do not.
+With the pod fitted, keep servo 2 within **1088–2024 us**, which is the 95 degree arc start ± 23.4 degrees of pod at the nominal scale. The keeper pocket only allows 23.5 degrees. The autonomous run caps itself there; manual `servo(...)` commands do not.
 
 ### DC motor
 
@@ -169,6 +170,7 @@ While a run is active the CLI prints its progress without being asked:
 | `PAUSED AT: … STEPS (… MM FROM SW4) DURING OUT; …` | After `pause`. No `DATA` rows print while paused. |
 | `CONTINUING: OUT` | After `continue`, followed straight away by a `DATA` row. |
 | `RUN COMPLETE: BACK AT SW4; HOME ERROR=… STEPS; …` | The run has finished its cycle back at SW4. |
+| `SERVO ARC TEST DONE` / `SERVO ARC TEST STOPPED` | A `servo(arc)` sweep finished, or was ended early by `stop`, a manual servo command, `run` or a fault. |
 | `DATA,…` | Every 1000 ms (CSV, see below). |
 | `STOPPED AT: … STEPS (… MM FROM SW4) DURING OUT; SERVO HOLDING … US` | The run is stopped early: `stop`, the button or a fault. |
 | `FAULT: LIMIT FAULT LATCHED (SW1 AND SW4 PRESSED); …` | Once, when both limits read pressed together. |
@@ -178,7 +180,7 @@ While a run is active the CLI prints its progress without being asked:
 
 ```text
 DATA,ms,leg,steps,mm,servo_us,pod_deg,dc,sw1,sw4
-DATA,190512,OUT,95000,238.2,1568,3.4,-100,0,0
+DATA,190512,OUT,95000,238.2,1624,3.4,-100,0,0
 ```
 
 `ms` is time since reset. `leg` is `BACKOFF`, `HOMING`, `OUT` or `RETURN`. `steps` and `mm` are the counted position from SW4 (398.87 steps/mm). `servo_us` is the commanded pulse, and `pod_deg` is the nominal pod angle (20 us per degree). `dc` is the drill duty, and `sw1`/`sw4` are the limit switches (1 = pressed). All values are commanded, not measured.
@@ -248,23 +250,23 @@ Ask Jonah if you have any questions.
 
 ### Servo pulse widths in firmware
 
-The servo mapping is 0 degrees = 500 us, 90 degrees = 1500 us, and 180 degrees = 2500 us at 50 Hz. Startup keeps PWM off. The CLI controls servo 2 (PB6); `servo(90)` selects degrees and `servo(1500u)` selects microseconds. Send one command per line. `stop` keeps the servo PWM running so it holds its last angle. Switching the PWM off mid-pulse can throw the servo past its limit. Individual commands are rejected during autonomous run or a latched fault.
+The servo mapping is 0 degrees = 500 us, 90 degrees = 1500 us, and 180 degrees = 2500 us at 50 Hz. The centre, where the pod is straight, is **95 degrees (1556 us)**: `SERVO_CENTRE_ANGLE` in `servo.h`. Both servos start there at power-up with their PWM off, and the run's arc starts there. The CLI controls servo 2 (PB6); `servo(95)` selects degrees and `servo(1556u)` selects microseconds. Send one command per line. `stop` keeps the servo PWM running so it holds its last angle. Switching the PWM off mid-pulse can throw the servo past its limit. Individual commands are rejected during autonomous run or a latched fault.
 
 For C code using robot state and fault checks:
 
 ```c
-Robot_SetServo(2, 90);             // Degrees; enables servo 2
-Robot_SetServoPulseUs(2, 1500);    // Microseconds; enables servo 2
+Robot_SetServo(2, 95);             // Degrees; enables servo 2
+Robot_SetServoPulseUs(2, 1556);    // Microseconds; enables servo 2
 ```
 
-Both functions return NULL on success or an error string. The low-level driver also provides `servo(2, 90)` and `Servo_SetPulseUs(2, 1500)`; these return HAL status and require `Servo_Start(2)` to enable output after initialization. In C, `1500u` is an unsigned integer, not a unit: use the separate pulse-width function. Angles are nominal; confirm the mechanism can accommodate the commanded travel.
+Both functions return NULL on success or an error string. The low-level driver also provides `servo(2, 95)` and `Servo_SetPulseUs(2, 1556)`; these return HAL status and require `Servo_Start(2)` to enable output after initialization. In C, `1556u` is an unsigned integer, not a unit: use the separate pulse-width function. `SERVO_ANGLE_US(angle)` in `servo.h` converts an angle to its pulse width. Angles are nominal; confirm the mechanism can accommodate the commanded travel.
 ### Demo sequence (`run` or PC11/SW2)
 
-1. Home to **SW4 / PC15** with the DC motor off and servo 2 at **1500 us (90 degrees)**. Zero is set where SW4 is first touched, after a 30 ms debounce.
+1. Home to **SW4 / PC15** with the DC motor off and servo 2 at **1556 us (95 degrees)**, the start of its arc. Zero is set where SW4 is first touched, after a 30 ms debounce.
    - If SW4 is **already pressed** when the run starts (for example after a completed run), the carriage first **backs off 1500 steps** toward SW1. SW4 must then read released; if it is still pressed 30 ms later, a limit fault latches instead of moving further. Otherwise the carriage homes back to first touch as normal.
 2. Set position to zero and push outward toward **SW1**, with DC duty **-100%**.
 3. At **SW1**, reverse the stepper and DC motor (**+100%**) and follow the servo schedule backwards on the return to SW4. There is no step-count limit: only the limit switches reverse the run.
-4. Back at SW4 the run **ends**: the stepper and DC motor stop and the servo holds straight (1500 us). The CLI prints `RUN COMPLETE` with the home error. Send `run` or press the button for another cycle; a new run always homes again.
+4. Back at SW4 the run **ends**: the stepper and DC motor stop and the servo returns to the start of its arc (95 degrees, 1556 us). The CLI prints `RUN COMPLETE` with the home error. Send `run` or press the button for another cycle; a new run always homes again.
 
 `stop` or a run-button press during a run stops the stepper and DC motor where they are and ends the run; the servo holds its angle. `pause` freezes the run the same way but keeps it, and `continue` resumes it. A pause during a switch debounce re-checks the switch for a fresh 30 ms on `continue`. A pause during the back-off or an overtravel finishes the remaining steps.
 
@@ -281,41 +283,42 @@ status
 
 ### Servo steering schedule
 
-The servo schedule comes from the CAD model (`Steering_schedule_from_CAD.csv`, 21 Oct 2026). At each position it gives the pod angle that keeps the cutter tip on the bore centreline. Servo 2 is **straight at 90 degrees (1500 us)**. Offsets use the nominal scale of 20 us per pod degree through the 1.8:1 gears.
+The servo schedule comes from the CAD model (`Steering_schedule_from_CAD.csv`, 21 Oct 2026). At each position it gives the pod angle that keeps the cutter tip on the bore centreline. The run's servo arc starts at **95 degrees (1556 us)**, where the CAD offset is zero, and never goes past **135 degrees (2000 us)**. Offsets use the nominal scale of 20 us per pod degree through the 1.8:1 gears. Degrees here use the same mapping as `servo(angle)`.
 
 The CSV counts steps from the CAD zero, which is the rear reversal point 1500 steps past SW4 first touch (398.87 steps/mm). With no limit overtravel, the firmware zeroes at SW4 first touch, so its positions are the CSV steps minus 1500.
 
 | CSV steps | Position from SW4 first touch | Pod angle | Servo 2 (us) |
 |---:|---:|---:|---:|
-| 1,500–66,715 | 0–65,215 | 0.00° | 1500 |
-| 69,706 | 68,206 | 0.13° | 1503 |
-| 73,695 | 72,195 | 0.37° | 1507 |
-| 77,684 | 76,184 | 0.70° | 1514 |
-| 81,672 | 80,172 | 1.11° | 1522 |
-| 85,661 | 84,161 | 1.60° | 1532 |
-| 89,650 | 88,150 | 2.18° | 1544 |
-| 93,638 | 92,138 | 2.84° | 1557 |
-| 97,627 | 96,127 | 3.59° | 1572 |
-| 101,616 | 100,116 | 4.41° | 1588 |
-| 105,604 | 104,104 | 5.33° | 1607 |
-| 109,593 | 108,093 | 6.33° | 1627 |
-| 113,582 | 112,082 | 7.41° | 1648 |
-| 117,570 | 116,070 | 8.57° | 1671 |
-| 121,559 | 120,059 | 9.82° | 1696 |
-| 125,548 | 124,048 | 11.14° | 1723 |
-| 129,537 | 128,037 | 12.54° | 1751 |
-| 133,525 | 132,025 | 13.98° | 1780 |
-| 137,514 | 136,014 | 15.42° | 1808 |
-| 141,503 | 140,003 | 16.85° | 1837 |
-| 144,853 | 143,353 (mid-bore) | 18.06° | 1861 |
-| 145,491 | 143,991 | 18.29° | 1866 |
-| 149,480 | 147,980 | 19.72° | 1894 |
-| 153,469 | 151,969 | 21.16° | 1923 |
-| 157,457 | 155,957 | 22.59° | 1952 |
-| 160,250 | 158,750 (SW1 first touch) | 23.60° → 23.40° | 1968 (capped) |
-| 161,750 | 160,250 | 24.13° → 23.40° | 1968 (capped) |
+| 1,500–66,715 | 0–65,215 | 0.00° | 1556 |
+| 69,706 | 68,206 | 0.13° | 1559 |
+| 73,695 | 72,195 | 0.37° | 1563 |
+| 77,684 | 76,184 | 0.70° | 1570 |
+| 81,672 | 80,172 | 1.11° | 1578 |
+| 85,661 | 84,161 | 1.60° | 1588 |
+| 89,650 | 88,150 | 2.18° | 1600 |
+| 93,638 | 92,138 | 2.84° | 1613 |
+| 97,627 | 96,127 | 3.59° | 1628 |
+| 101,616 | 100,116 | 4.41° | 1644 |
+| 105,604 | 104,104 | 5.33° | 1663 |
+| 109,593 | 108,093 | 6.33° | 1683 |
+| 113,582 | 112,082 | 7.41° | 1704 |
+| 117,570 | 116,070 | 8.57° | 1727 |
+| 121,559 | 120,059 | 9.82° | 1752 |
+| 125,548 | 124,048 | 11.14° | 1779 |
+| 129,537 | 128,037 | 12.54° | 1807 |
+| 133,525 | 132,025 | 13.98° | 1836 |
+| 137,514 | 136,014 | 15.42° | 1864 |
+| 141,503 | 140,003 | 16.85° | 1893 |
+| 144,853 | 143,353 (mid-bore) | 18.06° | 1917 |
+| 145,491 | 143,991 | 18.29° | 1922 |
+| 149,480 | 147,980 | 19.72° | 1950 |
+| 153,469 | 151,969 | 21.16° | 1979 |
+| 156,289 | 154,789 (arc reaches 135°) | 22.20° | 2000 |
+| 157,457 | 155,957 | 22.59° → 22.20° | 2000 (capped) |
+| 160,250 | 158,750 (SW1 first touch) | 23.60° → 22.20° | 2000 (capped) |
+| 161,750 | 160,250 | 24.13° → 22.20° | 2000 (capped) |
 
-Pulse widths are interpolated between adjacent rows and applied without a time-based ramp. The run follows the table all the way to SW1 and reverses there; there is no step-count limit. In the last ~1.6 mm before SW1 the CSV needs 23.6–24.1 degrees of pod, past the 23.5 degree keeper pocket, so the servo offset is capped at 468 us (23.4 degrees, 1968 us). It holds that value past the end of the table. The return to SW4 ends the run. Independent `stepper(auto)` remains a stepper-only test and does not activate this servo/DC schedule.
+Pulse widths are interpolated between adjacent rows and applied without a time-based ramp. The run follows the table all the way to SW1 and reverses there; there is no step-count limit. The table reaches the 135 degree end of the arc about 10 mm before SW1 (CSV 156,289), and the servo holds there to SW1 and beyond. That is 22.2 degrees of pod at the nominal scale, or about 20 degrees on the MG995 (measured at about 22 us per pod degree), inside the 23.5 degree keeper pocket. The return to SW4 ends the run. Independent `stepper(auto)` remains a stepper-only test and does not activate this servo/DC schedule.
 
 #### Limit overtravel (dampened switches)
 
@@ -336,7 +339,7 @@ The return uses a fixed reference captured at the actual outward turnaround: `po
 Each confirmed demo limit produces a serial line such as:
 
 ```text
-TURN: SW1; POSITION=158750; SERVO=1968 US; NEXT=SW4; DC=100%; HOME ERROR=0
+TURN: SW1; POSITION=158750; SERVO=2000 US; NEXT=SW4; DC=100%; HOME ERROR=0
 ```
 
 `status` also shows `OUTWARD END`, `RETURN PULSES`, and `LAST HOME ERROR`. Home error is the outward pulse count minus the return pulse count when SW4 first triggers, less any limit overtravel (positive = fewer pulses on return). These are commanded pulses, not encoder measurements. Counts can reveal switch-position differences, but cannot directly detect mechanical backlash, servo lag, or missed motor steps. Do not shift only the return table: that would deliberately command a different path.

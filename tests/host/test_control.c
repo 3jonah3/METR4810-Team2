@@ -131,7 +131,7 @@ static void test_demo(void)
     unsigned stops = servo_stops;
     send("run\n");
     CHECK(Robot_GetStatus()->demo_homing && direction == 0 && !Robot_GetStatus()->duty);
-    CHECK(fake_tim4.CCR[0] == 1500 && servos.active[0] && !servos.active[1]); /* 90 deg straight */
+    CHECK(fake_tim4.CCR[0] == 1556 && servos.active[0] && !servos.active[1]); /* 95 deg: start of the arc */
     continuous_pulses(1200);
     CHECK(Robot_GetStatus()->demo_position == 0);
     /* Home requires a stable press; bounce resumes homing. */
@@ -143,13 +143,13 @@ static void test_demo(void)
     CHECK(fake_tim16.ARR == period && Robot_GetStatus()->speed == 333);
     pressed = 0;
     /* CSV rows less the 1500-step CAD zero: positions count from SW4 first touch.
-       158750 is SW1 first touch, where the 23.4 degree keeper cap applies. */
+       158750 is SW1 first touch; the arc is capped at 135 degrees (2000 us). */
     const uint32_t points[] = {65215,68206,72195,76184,80172,84161,88150,92138,96127,100116,
         104104,108093,112082,116070,120059,124048,128037,132025,136014,140003,
         143353,143991,147980,151969,155957,158750};
-    const unsigned widths[] = {1500,1503,1507,1514,1522,1532,1544,1557,1572,1588,
-        1607,1627,1648,1671,1696,1723,1751,1780,1808,1837,
-        1861,1866,1894,1923,1952,1968};
+    const unsigned widths[] = {1556,1559,1563,1570,1578,1588,1600,1613,1628,1644,
+        1663,1683,1704,1727,1752,1779,1807,1836,1864,1893,
+        1917,1922,1950,1979,2000,2000};
     uint32_t previous = 0;
     for (unsigned i = 0; i < sizeof points / sizeof points[0]; ++i) {
         continuous_pulses(points[i] - previous);
@@ -160,15 +160,15 @@ static void test_demo(void)
     send("run\n"); CHECK(!Robot_GetStatus()->demo_homing && Robot_GetStatus()->demo_position == 158750);
     /* No step limit: only SW1 reverses; past the table the capped angle holds. */
     continuous_pulses(3000);
-    CHECK(direction == 1 && Robot_GetStatus()->demo_position == 161750 && fake_tim4.CCR[0] == 1968);
+    CHECK(direction == 1 && Robot_GetStatus()->demo_position == 161750 && fake_tim4.CCR[0] == 2000);
     output_length = 0;
     pressed = GPIO_PIN_14; pump(); tick += 30; pump(); pressed = 0;
     CHECK(direction == 0 && Robot_GetStatus()->duty == 100 && Robot_GetStatus()->turn_switch == 1);
     CHECK(fake_tim1.CCR[1] == 1000 && fake_tim1.CCR[0] == 0);
-    CHECK(strstr(output, "TURN: SW1; POSITION=161750; SERVO=1968 US; NEXT=SW4; DC=100%"));
+    CHECK(strstr(output, "TURN: SW1; POSITION=161750; SERVO=2000 US; NEXT=SW4; DC=100%"));
     output_length = 0; tick += 1000; pump();
-    CHECK(strstr(output, ",RETURN,161750,405.5,1968,23.4,100,0,0\r\n"));
-    continuous_pulses(3000); CHECK(Robot_GetStatus()->demo_position == 158750 && fake_tim4.CCR[0] == 1968);
+    CHECK(strstr(output, ",RETURN,161750,405.5,2000,22.2,100,0,0\r\n"));
+    continuous_pulses(3000); CHECK(Robot_GetStatus()->demo_position == 158750 && fake_tim4.CCR[0] == 2000);
     previous = 158750;
     for (int i = 24; i >= 0; --i) {
         continuous_pulses(previous - points[i]);
@@ -176,16 +176,16 @@ static void test_demo(void)
         CHECK(direction == 0);
         previous = points[i];
     }
-    continuous_pulses(65215); CHECK(Robot_GetStatus()->demo_position == 0 && fake_tim4.CCR[0] == 1500);
+    continuous_pulses(65215); CHECK(Robot_GetStatus()->demo_position == 0 && fake_tim4.CCR[0] == 1556);
     /* One cycle per run: back at SW4 the run ends with the servo straight. */
     output_length = 0;
     uint32_t turns = Robot_GetStatus()->turn_number;
     pressed = GPIO_PIN_15; pump(); tick += 30; pump();
     CHECK(Robot_GetStatus()->state == ROBOT_STOPPED && Robot_GetStatus()->run_complete);
     CHECK(!Stepper1_IsBusy() && !Robot_GetStatus()->duty && fake_tim1.CCR[0] == 0 && fake_tim1.CCR[1] == 0);
-    CHECK(servos.active[0] && fake_tim4.CCR[0] == 1500 && Robot_GetStatus()->demo_position == 0);
+    CHECK(servos.active[0] && fake_tim4.CCR[0] == 1556 && Robot_GetStatus()->demo_position == 0);
     CHECK(Robot_GetStatus()->home_step_error == 0 && Robot_GetStatus()->turn_number == turns);
-    CHECK(strstr(output, "RUN COMPLETE: BACK AT SW4; HOME ERROR=0 STEPS; SERVO HOLDING 1500 US"));
+    CHECK(strstr(output, "RUN COMPLETE: BACK AT SW4; HOME ERROR=0 STEPS; SERVO HOLDING 1556 US"));
     CHECK(!strstr(output, "TURN:"));
     for (unsigned i = 0; i < 20; ++i) { tick += 100; pump(); }
     CHECK(!Stepper1_IsBusy() && Robot_GetStatus()->state == ROBOT_STOPPED); /* does not repeat */
@@ -199,17 +199,17 @@ static void test_demo(void)
     continuous_pulses(1500); CHECK(direction == 0 && Robot_GetStatus()->demo_homing);
     pressed = GPIO_PIN_15; pump(); tick += 30; pump(); pressed = 0;
     CHECK(direction == 1 && Robot_GetStatus()->duty == -100 && Robot_GetStatus()->demo_position == 0);
-    continuous_pulses(95000); CHECK(fake_tim4.CCR[0] == 1568); /* interpolation */
-    send("status\n"); CHECK(strstr(output, "95000 STEPS") && strstr(output, "1568 US"));
+    continuous_pulses(95000); CHECK(fake_tim4.CCR[0] == 1624); /* interpolation */
+    send("status\n"); CHECK(strstr(output, "95000 STEPS") && strstr(output, "1624 US"));
     output_length = 0; tick += 1000; pump();
-    CHECK(strstr(output, ",OUT,95000,238.2,1568,3.4,-100,0,0\r\n"));
+    CHECK(strstr(output, ",OUT,95000,238.2,1624,3.4,-100,0,0\r\n"));
     /* stop freezes where it is: motion stops and the servo holds its angle. */
     send("stop\n");
-    CHECK(strstr(output, "STOPPED AT: 95000 STEPS (238.2 MM FROM SW4) DURING OUT; SERVO HOLDING 1568 US"));
-    CHECK(!Stepper1_IsBusy() && !Robot_GetStatus()->duty && servos.active[0] && fake_tim4.CCR[0] == 1568);
-    send("servo(status)\n"); CHECK(strstr(output, "1568 US") && strstr(output, "stop HOLDS IT"));
+    CHECK(strstr(output, "STOPPED AT: 95000 STEPS (238.2 MM FROM SW4) DURING OUT; SERVO HOLDING 1624 US"));
+    CHECK(!Stepper1_IsBusy() && !Robot_GetStatus()->duty && servos.active[0] && fake_tim4.CCR[0] == 1624);
+    send("servo(status)\n"); CHECK(strstr(output, "1624 US") && strstr(output, "stop HOLDS IT"));
     send("stepper(speed,1000)\n"); send("run\n"); /* re-homes without dropping the servo PWM */
-    CHECK(Robot_GetStatus()->demo_homing && fake_tim16.ARR == 999 && fake_tim4.CCR[0] == 1500 && servos.active[0]);
+    CHECK(Robot_GetStatus()->demo_homing && fake_tim16.ARR == 999 && fake_tim4.CCR[0] == 1556 && servos.active[0]);
     send("stop\n");
     CHECK(servo_stops == stops); /* run and stop never switched the servo PWM off */
     /* Stop must count a pulse whose rising edge has already occurred. */
@@ -229,7 +229,7 @@ static void test_demo(void)
     /* A simultaneous-limit fault stops motion; the servo holds its angle. */
     send("run\n"); pressed = GPIO_PIN_14 | GPIO_PIN_15; pump();
     CHECK(Robot_GetStatus()->fault && !Stepper1_IsBusy() && !Robot_GetStatus()->duty);
-    CHECK(servos.active[0] && fake_tim4.CCR[0] == 1500);
+    CHECK(servos.active[0] && fake_tim4.CCR[0] == 1556);
 }
 
 static void test_turns(void)
@@ -275,7 +275,7 @@ static void test_turns(void)
         CHECK(Robot_GetStatus()->return_steps == endpoints[n]);
         send("status\n"); CHECK(strstr(output, "LAST HOME ERROR=0 STEPS"));
     }
-    CHECK(outward[158750] == 1968 && outward[143353] == 1861);
+    CHECK(outward[158750] == 2000 && outward[143353] == 1917);
     reset(); run_and_home();
     continuous_pulses(140000);
     pressed = GPIO_PIN_14; pump(); tick += 30; pump(); pressed = 0;
@@ -284,22 +284,24 @@ static void test_turns(void)
     CHECK(Robot_GetStatus()->home_step_error == 1000); /* Stable early home is reported. */
     send("status\n"); CHECK(strstr(output, "LAST HOME ERROR=1000 STEPS"));
     /* An early home still ends the run at zero with the servo straight. */
-    CHECK(Robot_GetStatus()->demo_position == 0 && Robot_GetStatus()->run_complete && fake_tim4.CCR[0] == 1500);
+    CHECK(Robot_GetStatus()->demo_position == 0 && Robot_GetStatus()->run_complete && fake_tim4.CCR[0] == 1556);
     CHECK(!Stepper1_IsBusy() && Robot_GetStatus()->state == ROBOT_STOPPED);
     /* Mid-bore is not a turnaround. */
     run_and_home();
     continuous_pulses(143353);
-    CHECK(direction == 1 && Robot_GetStatus()->demo_position == 143353 && fake_tim4.CCR[0] == 1861);
+    CHECK(direction == 1 && Robot_GetStatus()->demo_position == 143353 && fake_tim4.CCR[0] == 1917);
     /* A pulse in flight when SW1 stops the stepper is counted in the turn position. */
     reset(); run_and_home();
     continuous_pulses(120000);
     fake_tim16.CNT = fake_tim16.CCR[0]; pressed = GPIO_PIN_14; pump(); tick += 30; pump(); pressed = 0;
     CHECK(direction == 0 && Robot_GetStatus()->turn_switch == 1 && Robot_GetStatus()->outward_steps == 120001);
-    /* Near SW1 the angle follows the table up to the keeper cap, then holds it. */
+    /* Near SW1 the angle follows the table up to 135 degrees, then holds it. */
     reset(); run_and_home();
-    continuous_pulses(157500); CHECK(direction == 1 && fake_tim4.CCR[0] == 1963);
-    continuous_pulses(12500); CHECK(direction == 1 && fake_tim4.CCR[0] == 1968);
-    send("stop\n"); CHECK(!Stepper1_IsBusy() && servos.active[0] && fake_tim4.CCR[0] == 1968);
+    continuous_pulses(153000); CHECK(direction == 1 && fake_tim4.CCR[0] == 1986);
+    continuous_pulses(1788); CHECK(fake_tim4.CCR[0] == 1999);
+    continuous_pulses(1); CHECK(fake_tim4.CCR[0] == 2000); /* 135 degrees */
+    continuous_pulses(15211); CHECK(direction == 1 && fake_tim4.CCR[0] == 2000);
+    send("stop\n"); CHECK(!Stepper1_IsBusy() && servos.active[0] && fake_tim4.CCR[0] == 2000);
 }
 #else
 static void overtravel_pulses(void)
@@ -314,7 +316,7 @@ static void test_overtravel(void)
     const uint32_t ot = LIMIT_OVERTRAVEL_STEPS;
     reset();
     send("run\n");
-    CHECK(Robot_GetStatus()->demo_homing && direction == 0 && fake_tim4.CCR[0] == 1500);
+    CHECK(Robot_GetStatus()->demo_homing && direction == 0 && fake_tim4.CCR[0] == 1556);
     continuous_pulses(5000);
     /* SW4 first touch: debounce, then a counted overtravel deeper into SW4, then zero. */
     pressed = GPIO_PIN_15; pump(); tick += 30; pump();
@@ -323,17 +325,17 @@ static void test_overtravel(void)
     overtravel_pulses();
     CHECK(!Robot_GetStatus()->demo_homing && direction == 1 && Robot_GetStatus()->duty == -100);
     CHECK(Robot_GetStatus()->home_step_error == 0);
-    CHECK(strstr(output, "TURN: SW4; POSITION=0; SERVO=1500 US; NEXT=SW1; DC=-100%; HOME ERROR=0"));
-    CHECK(Robot_GetStatus()->demo_position == 0 && fake_tim4.CCR[0] == 1500);
+    CHECK(strstr(output, "TURN: SW4; POSITION=0; SERVO=1556 US; NEXT=SW1; DC=-100%; HOME ERROR=0"));
+    CHECK(Robot_GetStatus()->demo_position == 0 && fake_tim4.CCR[0] == 1556);
     pressed = 0;
     /* With a 1500-step overtravel, positions are CSV steps directly. */
-    continuous_pulses(95000); CHECK(fake_tim4.CCR[0] == 1562);
-    continuous_pulses(160250 - 95000); CHECK(direction == 1 && fake_tim4.CCR[0] == 1968);
+    continuous_pulses(95000); CHECK(fake_tim4.CCR[0] == 1618);
+    continuous_pulses(160250 - 95000); CHECK(direction == 1 && fake_tim4.CCR[0] == 2000);
     /* SW1 first touch: the full overtravel, still at the capped angle, then reverse. */
     pressed = GPIO_PIN_14; pump(); tick += 30; pump();
     CHECK(direction == 1);
     overtravel_pulses(); pressed = 0;
-    CHECK(direction == 0 && Robot_GetStatus()->turn_switch == 1 && fake_tim4.CCR[0] == 1968);
+    CHECK(direction == 0 && Robot_GetStatus()->turn_switch == 1 && fake_tim4.CCR[0] == 2000);
     CHECK(Robot_GetStatus()->outward_steps == 160250 + ot);
     /* SW4 first touch comes ot pulses before zero: zero home error, then overtravel. */
     continuous_pulses(160250);
@@ -408,7 +410,7 @@ static void test_feedback(void)
     tick += 5000; pump(); CHECK(!strstr(output, "DATA,")); /* nothing while idle */
     send("run\n");
     CHECK(strstr(output, "RUN STARTED: HOMING TO SW4") && strstr(output, "DATA,ms,leg,steps,mm,servo_us,pod_deg,dc,sw1,sw4\r\n"));
-    char row[96]; snprintf(row, sizeof row, "DATA,%u,HOMING,0,0.0,1500,0.0,0,0,0\r\n", (unsigned)tick);
+    char row[96]; snprintf(row, sizeof row, "DATA,%u,HOMING,0,0.0,1556,0.0,0,0,0\r\n", (unsigned)tick);
     CHECK(strstr(output, row));
     clear_output(); tick += 999; pump(); CHECK(!strstr(output, "DATA,"));
     tick += 1; pump(); CHECK(strstr(output, ",HOMING,"));
@@ -419,7 +421,7 @@ static void test_feedback(void)
     clear_output(); tick += 5000; pump(); CHECK(!strstr(output, "DATA,"));
     send("telemetry(on)\n"); /* header again when re-enabled mid-run */
     CHECK(strstr(output, "DATA,ms,leg") && strstr(output, "EVERY 250 MS"));
-    send("stop\n"); CHECK(strstr(output, "STOPPED DURING HOMING (POSITION NOT SET); SERVO HOLDING 1500 US"));
+    send("stop\n"); CHECK(strstr(output, "STOPPED DURING HOMING (POSITION NOT SET); SERVO HOLDING 1556 US"));
     clear_output(); tick += 5000; pump(); CHECK(!strstr(output, "DATA,") && !strstr(output, "STOPPED"));
     /* A latched fault is reported once, with the stop. */
     send("run\n"); clear_output();
@@ -430,13 +432,13 @@ static void test_feedback(void)
     reset(); pressed = GPIO_PIN_15; send("run\n");
     snprintf(row, sizeof row, "RUN STARTED: SW4 PRESSED; BACKING OFF %u STEPS, THEN HOMING",
              (unsigned)RUN_START_BACKOFF_STEPS);
-    CHECK(strstr(output, row) && strstr(output, ",BACKOFF,0,0.0,1500,0.0,0,0,1\r\n"));
+    CHECK(strstr(output, row) && strstr(output, ",BACKOFF,0,0.0,1556,0.0,0,0,1\r\n"));
     send("status\n"); CHECK(strstr(output, "DEMO: BACKING OFF SW4"));
     backoff_pulses(UINT32_MAX); clear_output();
     tick += 30; pump();
     CHECK(Robot_GetStatus()->fault == ROBOT_FAULT_SW4_STUCK && !Stepper1_IsBusy());
     CHECK(strstr(output, "FAULT: LIMIT FAULT LATCHED (SW4 STILL PRESSED AFTER BACK-OFF)"));
-    CHECK(strstr(output, "STOPPED DURING BACKOFF (POSITION NOT SET); SERVO HOLDING 1500 US"));
+    CHECK(strstr(output, "STOPPED DURING BACKOFF (POSITION NOT SET); SERVO HOLDING 1556 US"));
     send("status\n"); CHECK(strstr(output, "FAULT: LIMIT FAULT LATCHED (SW4 STUCK)"));
     pressed = 0;
     const char *bad[] = {"telemetry(99)\n", "telemetry(10001)\n", "telemetry(maybe)\n", "TELEMETRY ON\n",
@@ -444,7 +446,7 @@ static void test_feedback(void)
     for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; ++i) { send(bad[i]); CHECK(strstr(output, "ERROR:")); }
     send("telemetry()\n"); CHECK(strstr(output, "TELEMETRY (printed during run)"));
     snprintf(row, sizeof row, "Starting on SW4: back off %u steps, then home.", (unsigned)RUN_START_BACKOFF_STEPS);
-    send("help\n"); CHECK(strstr(output, row) && strstr(output, "(DC -100%)") && strstr(output, "1032u..1968u"));
+    send("help\n"); CHECK(strstr(output, row) && strstr(output, "(DC -100%)") && strstr(output, "1088u..2024u"));
     /* A fault already latched at power-up still prints its FAULT line. */
     reset_pressed(GPIO_PIN_14 | GPIO_PIN_15);
     CHECK(Robot_GetStatus()->fault && strstr(output, "FAULT: LIMIT FAULT LATCHED (SW1 AND SW4 PRESSED)"));
@@ -552,6 +554,53 @@ static void test_pause(void)
     send("stop\n");
 }
 
+static void test_arc(void)
+{
+    reset(); /* both servos wait at the 95 degree centre with their PWM off */
+    CHECK(fake_tim4.CCR[0] == 1556 && fake_tim4.CCR[1] == 1556 && !servos.active[0] && !servos.active[1]);
+    send("servo(95)\n"); CHECK(fake_tim4.CCR[0] == 1556 && servos.active[0]);
+    send("servo(arc)\n");
+    CHECK(strstr(output, "OK: SERVO ARC TEST 95 -> 135 -> 95 DEG (1556 -> 2000 US), ABOUT 9 S"));
+    CHECK(Robot_GetStatus()->arc_test && servos.active[0] && fake_tim4.CCR[0] == 1556);
+    CHECK(!Stepper1_IsBusy() && !Robot_GetStatus()->duty); /* nothing else moves */
+    tick += 2000; pump(); CHECK(fake_tim4.CCR[0] == 1778);
+    tick += 2000; pump(); CHECK(fake_tim4.CCR[0] == 2000); /* 135 degrees */
+    tick += 999; pump(); CHECK(fake_tim4.CCR[0] == 2000);
+    tick += 1; pump(); CHECK(fake_tim4.CCR[0] == 2000);
+    tick += 2000; pump(); CHECK(fake_tim4.CCR[0] == 1778);
+    send("servo(status)\n"); CHECK(strstr(output, "ARC TEST RUNNING"));
+    clear_output(); tick += 1999; pump(); CHECK(Robot_GetStatus()->arc_test && fake_tim4.CCR[0] == 1556);
+    tick += 1; pump();
+    CHECK(!Robot_GetStatus()->arc_test && Robot_GetStatus()->arc_tests_done == 1);
+    CHECK(servos.active[0] && fake_tim4.CCR[0] == 1556 && !Stepper1_IsBusy() && !Robot_GetStatus()->duty);
+    CHECK(strstr(output, "SERVO ARC TEST DONE: SERVO HOLDING 1556 US"));
+    clear_output(); tick += 5000; pump(); CHECK(!strstr(output, "ARC") && fake_tim4.CCR[0] == 1556);
+    /* stop aborts the sweep and the servo holds where it is */
+    send("servo(arc)\n"); tick += 1000; pump(); CHECK(fake_tim4.CCR[0] == 1667);
+    send("stop\n");
+    CHECK(!Robot_GetStatus()->arc_test && strstr(output, "SERVO ARC TEST STOPPED: SERVO HOLDING 1667 US"));
+    tick += 3000; pump(); CHECK(fake_tim4.CCR[0] == 1667 && servos.active[0]);
+    /* a manual servo command ends the sweep */
+    send("servo(arc)\n"); tick += 500; pump();
+    send("servo(1700u)\n");
+    CHECK(!Robot_GetStatus()->arc_test && fake_tim4.CCR[0] == 1700 && strstr(output, "SERVO ARC TEST STOPPED"));
+    tick += 3000; pump(); CHECK(fake_tim4.CCR[0] == 1700);
+    /* run takes over: the sweep ends and the run homes with the servo at the centre */
+    send("servo(arc)\n"); tick += 1500; pump();
+    send("run\n"); CHECK(!Robot_GetStatus()->arc_test && Robot_GetStatus()->demo_homing && fake_tim4.CCR[0] == 1556);
+    /* refused during a run and while a fault is latched */
+    send("servo(arc)\n"); CHECK(strstr(output, "send stop first") && !Robot_GetStatus()->arc_test);
+    send("stop\n");
+    send("servo(arc)\n"); pressed = GPIO_PIN_14 | GPIO_PIN_15; pump(); pressed = 0;
+    CHECK(Robot_GetStatus()->fault && !Robot_GetStatus()->arc_test);
+    send("servo(arc)\n"); CHECK(strstr(output, "FAULT LATCHED") && !Robot_GetStatus()->arc_test);
+    send("servo(arcs)\n"); CHECK(strstr(output, "ERROR:"));
+    /* the guide shows the centre and the sweep */
+    reset(); send("servo()\n");
+    CHECK(strstr(output, "Example: servo(95), the centre.") && strstr(output, "servo(1556u) Set pulse width"));
+    CHECK(strstr(output, "servo(arc)    Sweep the run's arc: 95 -> 135 -> 95 deg in about"));
+}
+
 int main(void)
 {
 #if LIMIT_OVERTRAVEL_STEPS
@@ -562,6 +611,7 @@ int main(void)
 #endif
     test_feedback();
     test_pause();
+    test_arc();
     reset();
     CHECK(strstr(output, "Welcome to METR4810") && strstr(output, "(O,O)") && strstr(output, "stepper(speed,") && strstr(output, "servo(angle)"));
     CHECK(strstr(output, "Welcome to METR4810 Team 2 CLI") < strstr(output, "(O,O)"));
@@ -622,8 +672,8 @@ int main(void)
     CHECK(Servo_SetPulseUs(2, 2501) == HAL_ERROR);
     CHECK(Robot_SetServoPulseUs(1, 1500) == NULL && servos.active[1]);
     send("stop\n"); send("run\n");
-    send("servo(1500u)\n"); CHECK(strstr(output, "send stop first") && servos.active[0] && fake_tim4.CCR[0] == 1500);
-    send("STOP\n"); CHECK(servos.active[0] && servos.active[1] && fake_tim4.CCR[0] == 1500); /* held */
+    send("servo(1500u)\n"); CHECK(strstr(output, "send stop first") && servos.active[0] && fake_tim4.CCR[0] == 1556);
+    send("STOP\n"); CHECK(servos.active[0] && servos.active[1] && fake_tim4.CCR[0] == 1556); /* held */
     reset();
     const char *invalid[] = {"servo(181)\n", "servo(-1)\n", "servo(499u)\n", "servo(2501u)\n", "servo(-1500u)\n", "servo(1500uu)\n", "servo(1500ux)\n", "servo(u)\n", "servo(999999999999999999u)\n", "servo(1500.5u)\n", "servo(200)\n","SERVO 0 90\n","SERVO 1\n","motor(-101)\n","motor(101)\n", "motor(50x)\n",
         "stepper(speed,-100)\n","stepper(speed,0)\n","stepper(speed,2001)\n","stepper(0)\n","stepper(-2147483648)\n",

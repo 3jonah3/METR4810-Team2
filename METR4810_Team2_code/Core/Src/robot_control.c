@@ -11,22 +11,25 @@
 #define DEMO_RETURN_DC_DUTY 100
 static RobotStatus status;
 static uint8_t debouncing, overtravel;
+static uint32_t arc_test_start;
 static uint32_t debounce_start;
 static uint8_t button_raw, button_stable;
 static uint32_t button_changed;
 static void start_auto(void);
+static void arc_test_update(void);
 static uint32_t demo_leg_start_pulses, demo_leg_start_position;
 
 /* CAD steering schedule (Steering_schedule_from_CAD.csv, 21 Oct 2026): servo offset
-   from straight that keeps the cutter tip on the bore centreline, at the nominal
+   from the start of the arc that keeps the cutter tip on the bore centreline, at the nominal
    DEMO_US_PER_POD_DEG scale. CSV steps count from the CAD zero,
    the rear reversal point 1500 steps past SW4 first touch (398.87 steps/mm).
    The run follows it out to SW1 (CSV 160250 at first touch).
    Interpolate pulse widths, not the rounded angles shown in the guide. */
 #define CAD_ZERO_PAST_SW4 1500U
-/* The pod keeper pocket allows 23.5 degrees but the last rows need 23.6-24.1, so
-   the offset is capped just inside it (23.4 degrees) for the final ~1.6 mm. */
-#define DEMO_MAX_OFFSET_US 468U
+/* The arc ends at 135 degrees, so the offset is capped there for the last ~10 mm
+   before SW1. That is 22.2 degrees of pod at the nominal scale (about 20 on the
+   MG995), inside the 23.5 degree keeper. */
+#define DEMO_MAX_OFFSET_US (DEMO_END_PULSE_US - DEMO_START_PULSE_US)
 static const struct { uint32_t step; unsigned offset; } demo_schedule[] = {
     {0U, 0U}, {66715U, 0U}, {69706U, 3U}, {73695U, 7U},
     {77684U, 14U}, {81672U, 22U}, {85661U, 32U}, {89650U, 44U},
@@ -61,7 +64,7 @@ static unsigned demo_pulse(uint32_t step)
             break;
         }
     }
-    return DEMO_STRAIGHT_PULSE_US + (offset > DEMO_MAX_OFFSET_US ? DEMO_MAX_OFFSET_US : offset);
+    return DEMO_START_PULSE_US + (offset > DEMO_MAX_OFFSET_US ? DEMO_MAX_OFFSET_US : offset);
 }
 
 /* Command servo 2 only when the pulse changes, and keep the reported angle in step. */
@@ -132,7 +135,7 @@ static void turn_around(void)
         } else {
             status.demo_position = 0U;
             status.demo_homing = 0U;
-            demo_servo(DEMO_STRAIGHT_PULSE_US);
+            demo_servo(DEMO_START_PULSE_US);
         }
     }
     status.target = status.target == 4U ? 1U : 4U;
@@ -145,11 +148,11 @@ static void turn_around(void)
     start_target();
 }
 
-/* One cycle per run: back at SW4 after SW1, stop there with the servo straight. */
+/* One cycle per run: back at SW4 after SW1, stop there with the servo at the arc start. */
 static void finish_run(void)
 {
     status.demo_position = 0U;
-    demo_servo(DEMO_STRAIGHT_PULSE_US);
+    demo_servo(DEMO_START_PULSE_US);
     Robot_Stop();
     status.run_complete = 1U;
 }
@@ -194,6 +197,8 @@ void Robot_Init(TIM_HandleTypeDef *motor, TIM_HandleTypeDef *stepper, TIM_Handle
     status.turn_switch = 0;
     status.run_complete = status.paused = 0;
     status.pause_remaining = 0;
+    status.arc_test = 0;
+    status.arc_tests_done = 0;
     Motor1_Init(motor); /* Driver starts PWM at zero duty. */
     Stepper1_Init(stepper);
     Stepper1_SetSpeed(status.speed);
@@ -217,6 +222,7 @@ void Robot_Stop(void)
     debouncing = overtravel = 0;
     status.demo_homing = status.demo_backoff = status.paused = 0;
     status.pause_remaining = 0;
+    status.arc_test = 0;
 }
 
 void Robot_Update(void)
@@ -233,6 +239,7 @@ void Robot_Update(void)
     }
     if (status.state == ROBOT_RUNNING) demo_update_position();
     if (status.state == ROBOT_RUNNING && status.paused) return; /* Frozen until continue or stop. */
+    if (status.arc_test) arc_test_update();
     if (status.step_mode == ROBOT_STEP_MANUAL) {
         if (Switch_IsPressed(status.target) || !Stepper1_IsBusy()) {
             Stepper1_Stop();
@@ -273,6 +280,26 @@ void Robot_Update(void)
     }
 }
 
+/* servo(arc): ramp out to the end of the arc, hold, ramp back, then stay at the centre. */
+static void arc_test_update(void)
+{
+    uint32_t t = HAL_GetTick() - arc_test_start;
+    uint32_t span = DEMO_END_PULSE_US - DEMO_START_PULSE_US;
+    unsigned pulse = DEMO_START_PULSE_US;
+    if (t < ARC_TEST_SWEEP_MS)
+        pulse = DEMO_START_PULSE_US + (t * span + ARC_TEST_SWEEP_MS / 2U) / ARC_TEST_SWEEP_MS;
+    else if (t < ARC_TEST_SWEEP_MS + ARC_TEST_HOLD_MS)
+        pulse = DEMO_END_PULSE_US;
+    else if (t < 2U * ARC_TEST_SWEEP_MS + ARC_TEST_HOLD_MS)
+        pulse = DEMO_END_PULSE_US - ((t - ARC_TEST_SWEEP_MS - ARC_TEST_HOLD_MS) * span +
+                                     ARC_TEST_SWEEP_MS / 2U) / ARC_TEST_SWEEP_MS;
+    else {
+        status.arc_test = 0;
+        ++status.arc_tests_done;
+    }
+    demo_servo(pulse);
+}
+
 /* Gate for CLI motion. A latched fault blocks everything; a run also blocks the
    individual actuator commands (individual = 1). */
 static const char *motion_allowed(uint8_t individual)
@@ -294,7 +321,7 @@ static void begin_auto(void)
     start_target();
 }
 
-/* Start a run: DC off, servo straight, then home to SW4 (backing off it first if pressed). */
+/* Start a run: DC off, servo at the arc start, then home to SW4 (backing off it first if pressed). */
 static void start_auto(void)
 {
     Stepper1_Stop();
@@ -302,7 +329,7 @@ static void start_auto(void)
     /* Re-home on every run; never treat an arbitrary starting point as zero.
        A running servo PWM takes the new width at its next period, without a glitch. */
     status.servo_pulse_us[1] = -1;
-    demo_servo(DEMO_STRAIGHT_PULSE_US);
+    demo_servo(DEMO_START_PULSE_US);
     if (Servo_Start(2U) != HAL_OK) { Error_Handler(); return; }
     status.duty = 0;
     status.demo_homing = 1U;
@@ -313,6 +340,7 @@ static void start_auto(void)
     status.home_step_error = 0;
     status.run_complete = status.paused = 0;
     status.pause_remaining = 0;
+    status.arc_test = 0;
     status.target = 4U;
     status.step_mode = ROBOT_STEP_AUTO;
     status.state = ROBOT_RUNNING;
@@ -371,6 +399,18 @@ const char *Robot_Continue(void)
     return NULL;
 }
 
+const char *Robot_ServoArcTest(void)
+{
+    const char *error = motion_allowed(1);
+    if (error) return error;
+    demo_servo(DEMO_START_PULSE_US);
+    if (Servo_Start(2U) != HAL_OK) return "SERVO DRIVER ERROR";
+    arc_test_start = HAL_GetTick();
+    status.arc_test = 1U;
+    status.state = ROBOT_IDLE;
+    return NULL;
+}
+
 const char *Robot_StepperAuto(void)
 {
     const char *error = motion_allowed(1);
@@ -426,9 +466,9 @@ const char *Robot_SetServo(unsigned id, unsigned angle)
     if (error) return error;
     if (servo((uint8_t)id, (int)angle) != HAL_OK || Servo_Start((uint8_t)id) != HAL_OK)
         return "SERVO DRIVER ERROR";
+    status.arc_test = 0; /* A manual target ends any sweep. */
     status.servo_angle[id - 1] = (int)angle;
-    status.servo_pulse_us[id - 1] = SERVO_MIN_PULSE_US +
-        (angle * (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US) + SERVO_MAX_ANGLE / 2) / SERVO_MAX_ANGLE;
+    status.servo_pulse_us[id - 1] = (int)SERVO_ANGLE_US(angle);
     status.state = ROBOT_IDLE;
     return NULL;
 }
@@ -442,6 +482,7 @@ const char *Robot_SetServoPulseUs(unsigned id, unsigned pulse_us)
     if (error) return error;
     if (Servo_SetPulseUs((uint8_t)id, pulse_us) != HAL_OK || Servo_Start((uint8_t)id) != HAL_OK)
         return "SERVO DRIVER ERROR";
+    status.arc_test = 0; /* A manual target ends any sweep. */
     status.servo_pulse_us[id - 1] = (int)pulse_us;
     status.servo_angle[id - 1] = ((pulse_us - SERVO_MIN_PULSE_US) * SERVO_MAX_ANGLE +
         (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US) / 2) / (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US);

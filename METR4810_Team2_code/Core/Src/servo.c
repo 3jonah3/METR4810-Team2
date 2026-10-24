@@ -3,8 +3,6 @@
 
 static TIM_HandleTypeDef *servoTimer = NULL;
 
-/* Nominal 0-180 degree mapping for the 500-2500 us servos. */
-
 static const uint32_t channels[2] = {
     TIM_CHANNEL_2,  // Servo 1: PB7
     TIM_CHANNEL_1   // Servo 2: PB6
@@ -19,12 +17,7 @@ HAL_StatusTypeDef servo(uint8_t servo_ID, int angle)
         return HAL_ERROR;
     }
 
-    uint32_t pulseUs = SERVO_MIN_PULSE_US
-        + ((uint32_t)angle *
-           (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US)
-           + SERVO_MAX_ANGLE / 2) / SERVO_MAX_ANGLE;
-
-    return Servo_SetPulseUs(servo_ID, pulseUs);
+    return Servo_SetPulseUs(servo_ID, SERVO_ANGLE_US(angle));
 }
 
 HAL_StatusTypeDef Servo_SetPulseUs(uint8_t servo_ID, unsigned pulse_us)
@@ -48,8 +41,8 @@ void Servo_Init(TIM_HandleTypeDef *timer)
 
     servoTimer = timer;
 
-    // Centre is 90 degrees (1500 us); PWM stays off until explicitly started.
-    if (servo(1, 90) != HAL_OK || servo(2, 90) != HAL_OK)
+    // Start at the centre; PWM stays off until explicitly started.
+    if (servo(1, SERVO_CENTRE_ANGLE) != HAL_OK || servo(2, SERVO_CENTRE_ANGLE) != HAL_OK)
     {
         Error_Handler();
         return;

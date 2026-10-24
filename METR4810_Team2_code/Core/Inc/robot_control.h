@@ -1,6 +1,7 @@
 #ifndef ROBOT_CONTROL_H
 #define ROBOT_CONTROL_H
 #include "stm32g4xx_hal.h"
+#include "servo.h"
 
 /* STEP pulses driven past a debounced SW1/SW4 press before reversing; the SW4
    reversal point is position zero. Keep 0 until dampened switch mounts are
@@ -14,7 +15,14 @@
 /* status.fault values; any non-zero fault stops everything until reset. */
 #define ROBOT_FAULT_BOTH_LIMITS 1U /* SW1 and SW4 pressed together. */
 #define ROBOT_FAULT_SW4_STUCK 2U /* SW4 still pressed after the run-start back-off. */
-#define DEMO_STRAIGHT_PULSE_US 1500U /* Servo 2 at 90 degrees: pod straight. */
+/* The run's servo arc: it starts at the servo centre (CAD offset 0) and never goes
+   past DEMO_END_ANGLE. */
+#define DEMO_START_PULSE_US SERVO_ANGLE_US(SERVO_CENTRE_ANGLE) /* 95 degrees: 1556 us. */
+#define DEMO_END_ANGLE 135
+#define DEMO_END_PULSE_US SERVO_ANGLE_US(DEMO_END_ANGLE) /* 2000 us. */
+/* servo(arc) timing: sweep out, hold at the end, sweep back. */
+#define ARC_TEST_SWEEP_MS 4000U
+#define ARC_TEST_HOLD_MS 1000U
 #define DEMO_US_PER_POD_DEG 20U /* Nominal scale through the 1.8:1 gears. */
 
 /* RUNNING means a demo run is active (possibly paused). IDLE covers manual CLI use. */
@@ -40,6 +48,8 @@ typedef struct {
     uint8_t run_complete; /* 1 once a run has finished its cycle back at SW4. */
     uint8_t paused; /* 1 while a run is frozen, waiting for continue or stop. */
     uint32_t pause_remaining; /* Back-off or overtravel pulses that continue will finish. */
+    uint8_t arc_test; /* 1 while servo(arc) is sweeping. */
+    uint32_t arc_tests_done; /* Sweeps that finished back at the centre. */
 } RobotStatus;
 
 /* Start the drivers with the stepper and DC motor off and no servo signal. Call once after the MX inits. */
@@ -58,6 +68,8 @@ const char *Robot_StartAuto(void);
 const char *Robot_Pause(void);
 /* Resume a paused run on the same leg, from where it stopped. */
 const char *Robot_Continue(void);
+/* Servo 2 sweeps the run's arc (centre, end, centre) with nothing else moving. */
+const char *Robot_ServoArcTest(void);
 /* Stepper-only test: travel between SW1 and SW4 until stopped. Leaves the DC motor alone. */
 const char *Robot_StepperAuto(void);
 /* Counted move; positive steps go toward SW4. Stops early at the target switch. */

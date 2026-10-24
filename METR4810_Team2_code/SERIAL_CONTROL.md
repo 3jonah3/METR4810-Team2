@@ -82,7 +82,7 @@ Quick example (with room for safe motion):
 
 ```text
 help
-servo(90)
+servo(95)
 motor(30)
 motor(0)
 motor(-30)
@@ -136,7 +136,8 @@ and tabs around names and arguments are accepted, e.g. `motor( -50 )`. Extra par
 | `stepper(200)` / `stepper(-200)` | 200 pulses toward SW4 / SW1 |
 | `stepper(speed,500)` | Set nominal speed, 16–2000 steps/s; stepper must be stopped |
 | `stepper(auto)` / `stepper(stop)` / `stepper(status)` | Standalone automatic travel / stop / inspect |
-| `servo(90)` / `servo(45)` | Set physical servo 2 target and enable its PWM |
+| `servo(95)` / `servo(120)` | Set physical servo 2 target and enable its PWM; 95 degrees is the centre |
+| `servo(arc)` | Arc test: sweep servo 2 from 95 to 135 degrees and back (4 s out, 1 s hold, 4 s back); `stop` aborts |
 | `servo(status)` | Last accepted servo 2 target; -1 means no commanded position |
 | `motor(50)` / `motor(-50)` | Signed duty from -100 to +100%; negative reverses direction |
 | `motor(stop)` / `motor(status)` | Stop / inspect DC motor |
@@ -150,10 +151,13 @@ automatic travel still uses the original PWM1 waveform. Integer timer division a
 quantizes speed. Counts describe electrical STEP pulses, not encoder-confirmed
 mechanical displacement; stalls, STOP, or limits can prevent completing a move.
 
-Servo angles map 0–180 degrees onto 500–2500 microseconds, with rounding; 90 degrees
-is 1500 microseconds and the pod is straight there. With the pod fitted, keep servo 2
-within 1032–1968 us: the keeper pocket allows only 23.5 degrees of pod at 20 us per
-degree. The autonomous run caps itself there; manual `servo(...)` commands do not.
+Servo angles map 0–180 degrees onto 500–2500 microseconds, with rounding. The centre,
+where the pod is straight, is 95 degrees (1556 us), set by `SERVO_CENTRE_ANGLE` in
+`servo.h`; both servos start there at power-up with their PWM off. The run's arc starts
+at the centre and ends at 135 degrees (2000 us). With the pod
+fitted, keep servo 2 within 1088–2024 us: the keeper pocket allows only 23.5
+degrees of pod at 20 us per degree. The autonomous run caps itself there; manual
+`servo(...)` commands do not.
 
 RX uses a 256-byte ring; commands have at most 95 characters; TX uses an 8192-byte ring.
 No dynamic allocation is used by application modules. Callbacks only buffer bytes,
@@ -208,10 +212,10 @@ backspace control bytes; they are deliberately rejected by the firmware.
    LOW idle, DIR setup time, clean first/last pulses, no extra edges after STOP,
    and no lost mechanical steps. STOP mid-move and verify REMAINING becomes zero.
 7. Test `motor(50)`, `motor(-50)`, `motor(100)`, `motor(-100)`, `motor(stop)`, and `motor(status)`. Verify the physical direction and signed duty in status; use low duty initially with the mechanism clear. Test servo targets
-   `servo(90)`, `servo(1700u)` and `servo(1968u)` on physical servo 2, then STOP: the
-   servo must keep holding. Measure 50 Hz and pulse widths of 1500, 1700 and 1968
+   `servo(95)`, `servo(1700u)` and `servo(2000u)` on physical servo 2, then STOP: the
+   servo must keep holding. Measure 50 Hz and pulse widths of 1556, 1700 and 2000
    microseconds. Verify initialization does not move either servo; with the pod
-   fitted, stay within 1032–1968 us.
+   fitted, stay within 1088–2024 us.
 8. Test lowercase commands, CR-only, LF-only, and CRLF (one reply per command).
    Try `stepper(speed,-100)`, `servo(200)`, `motor(101)`, `motor(-101)`, `servo(1,90)`,
    `STEPPER`, `motor(50x)`, a huge integer, `RUN extra`, and `UNKNOWN`.
