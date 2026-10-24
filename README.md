@@ -6,10 +6,10 @@
 
 After flashing and powering the PCB, choose either option:
 
-- **Button:** press **PC11 / SW2** to start the autonomous run. Release and press again to stop. No UART or computer connection is needed.
+- **Run switch:** switch **PC11 / SW2** ON to start one autonomous cycle; switch OFF to stop. No UART or computer connection is needed.
 - **UART CLI:** connect through PuTTY to use `run`, `stop`, or control the motor, servo and stepper individually.
 
-Both controls work together: the button can stop a CLI-started run, and `stop` can stop a button-started run. For button-only use, complete steps 1–3 and skip the UART/PuTTY setup.
+Both controls work together: an ON-to-OFF transition can stop a CLI-started run, and `stop` can stop a switch-started run. For switch-only use, complete steps 1–3 and skip the UART/PuTTY setup.
 
 ## 1. Clone the repository
 
@@ -115,7 +115,8 @@ Type one command at a time and press **Enter**.
 | `ping` | Check the serial connection. |
 | `status` | Show robot state and actuator status. |
 | `limits` | Show switch states: 1 = pressed. |
-| `run` | One cycle: home to SW4, drive out to SW1, return to SW4 and stop there. The servo follows the schedule and the DC direction follows travel. |
+| `speed(1000,500,1000)` | Set straight, turning, and return stepper speeds in steps/s. Each must be 16�2000; configure while stopped. |
+| `run` | One cycle: home to SW4, drive out to 157,297 steps, return to physical SW4 and stop. The servo follows the schedule and the DC direction follows travel. |
 | `pause` | Freeze a run where it is: the stepper and DC motor stop and the servo holds its angle. The run is kept; `run` and manual moves are refused until `continue` or `stop`. |
 | `continue` | Resume a paused run from exactly where it stopped, on the same leg with the same drill duty. |
 | `stop` | Stop the stepper and DC motor where they are and end the run; the servo holds its angle. |
@@ -126,9 +127,10 @@ All servo commands use **servo 2**.
 
 | Command | Action |
 |---|---|
+| `straight()` | Move servo 2 to the current calibrated straight angle, or 90 degrees by default. Keeps the calibration. |
 | `servo(95)` | Set angle; range **0–180 degrees**. 95 degrees is the centre, where the pod is straight. |
 | `servo(1556u)` | Set pulse width directly; range **500–2500 microseconds**. 1556 us is the centre. |
-| `servo(arc)` | Arc test: sweep the run's arc from 95 to 135 degrees over 4 s, hold 1 s, and sweep back over 4 s. Nothing else moves. It ends holding at 95 degrees; `stop` aborts it and the servo holds where it is. |
+| `servo(arc)` | Arc test: sweep the run's arc from 90 to 135 degrees over 4 s, hold 1 s, and sweep back over 4 s. Nothing else moves. It ends holding at 90 degrees; `stop` aborts it and the servo holds where it is. |
 | `servo(status)` | Show nominal target angle and exact pulse width (not measured position). |
 | `servo()` | Show help. |
 
@@ -164,15 +166,16 @@ While a run is active the CLI prints its progress without being asked:
 
 | Line | When |
 |---|---|
-| `RUN STARTED: HOMING TO SW4` | A run starts, from `run` or the PC11 button. |
-| `RUN STARTED: SW4 PRESSED; BACKING OFF 1500 STEPS, THEN HOMING` | A run starts with SW4 already pressed, for example right after a completed run. |
-| `TURN: SW4; …` / `TURN: SW1; …` | At SW4 after homing, and at SW1. |
+| `RUN STARTED: HOMING TO SW4` | A run starts, from `run` or the PC11 switch. |
+| `RUN STARTED: SW4 PRESSED; BACKING OFF 1500 STEPS, THEN HOMING` | A run starts with SW4 already pressed, for example after manually moving onto SW4. |
+| `TURN: OUTWARD LIMIT; ...` | Normal counted outward reversal at 157,297 steps, without touching SW1. |
+| `TURN: SW4; …` / `TURN: SW1; …` | Physical switch events: SW4 after homing, or an earlier-than-planned SW1 hit. |
 | `PAUSED AT: … STEPS (… MM FROM SW4) DURING OUT; …` | After `pause`. No `DATA` rows print while paused. |
 | `CONTINUING: OUT` | After `continue`, followed straight away by a `DATA` row. |
-| `RUN COMPLETE: BACK AT SW4; HOME ERROR=… STEPS; …` | The run has finished its cycle back at SW4. |
+| `RUN COMPLETE: SW4 REACHED; POSITION=0 STEPS; ...` | Return finished on physical SW4; servo holds calibrated straight. |
 | `SERVO ARC TEST DONE` / `SERVO ARC TEST STOPPED` | A `servo(arc)` sweep finished, or was ended early by `stop`, a manual servo command, `run` or a fault. |
 | `DATA,…` | Every 1000 ms (CSV, see below). |
-| `STOPPED AT: … STEPS (… MM FROM SW4) DURING OUT; SERVO HOLDING … US` | The run is stopped early: `stop`, the button or a fault. |
+| `STOPPED AT: … STEPS (… MM FROM SW4) DURING OUT; SERVO HOLDING … US` | The run is stopped early: `stop`, the switch or a fault. |
 | `FAULT: LIMIT FAULT LATCHED (SW1 AND SW4 PRESSED); …` | Once, when both limits read pressed together. |
 | `FAULT: LIMIT FAULT LATCHED (SW4 STILL PRESSED AFTER BACK-OFF); …` | Once, when SW4 has not released after the run-start back-off. |
 
@@ -180,10 +183,10 @@ While a run is active the CLI prints its progress without being asked:
 
 ```text
 DATA,ms,leg,steps,mm,servo_us,pod_deg,dc,sw1,sw4
-DATA,190512,OUT,95000,238.2,1624,3.4,-100,0,0
+DATA,190512,OUT,95000,238.2,1500,0.0,-100,0,0
 ```
 
-`ms` is time since reset. `leg` is `BACKOFF`, `HOMING`, `OUT` or `RETURN`. `steps` and `mm` are the counted position from SW4 (398.87 steps/mm). `servo_us` is the commanded pulse, and `pod_deg` is the nominal pod angle (20 us per degree). `dc` is the drill duty, and `sw1`/`sw4` are the limit switches (1 = pressed). All values are commanded, not measured.
+`ms` is time since reset. `leg` is `BACKOFF`, `HOMING`, `OUT` or `RETURN`. `steps` and `mm` are the counted position from SW4 (398.87 steps/mm). `servo_us` is the commanded pulse, and `pod_deg` is the nominal pod-angle offset from the run's 90 degree start (20 us per degree), rather than an absolute angle from the fitted 95 degree centre. `dc` is the drill duty, and `sw1`/`sw4` are the limit switches (1 = pressed). All values are commanded, not measured.
 
 | Command | Action |
 |---|---|
@@ -193,17 +196,17 @@ DATA,190512,OUT,95000,238.2,1624,3.4,-100,0,0
 
 To save a run, turn on PuTTY logging before starting it: **Session → Logging → Printable output**, then choose a file. The lines starting with `DATA,` open directly as CSV in Excel or MATLAB.
 
-## 7. Limit switches and run button
+## 7. Limit switches and run switch
 
 - **Front limit switch → SW1**.
 - **Back limit switch → SW4**.
-- **Run button → SW2 / PC11** (not pictured).
+- **Run switch → SW2 / PC11** (not pictured).
 
 <img src="docs/images/Limit_switches_rotated.png" alt="Front and back limit switch connections on SW1 and SW4" width="400">
 
-Press **PC11 / SW2** to start `run`. Release and press again to stop.
+Switch **PC11 / SW2** ON (contact closed to ground) to start one cycle, and OFF (contact open) to stop the stepper and DC motor while the servo holds its angle. Both transitions use a 30 ms debounce. After completion or `stop`, switch OFF then ON to start another cycle. Leaving the switch ON never repeats the run; ON at reset requires OFF then ON first.
 
-This works without UART connected. The `run` and `stop` commands still work too. There is no startup interlock.
+This works without UART connected. The `run` and `stop` commands still work too. The switch is not a UART interlock: CLI commands still work while it is OFF.
 
 ## 8. Schematics and PCB routing
 
@@ -250,7 +253,7 @@ Ask Jonah if you have any questions.
 
 ### Servo pulse widths in firmware
 
-The servo mapping is 0 degrees = 500 us, 90 degrees = 1500 us, and 180 degrees = 2500 us at 50 Hz. The centre, where the pod is straight, is **95 degrees (1556 us)**: `SERVO_CENTRE_ANGLE` in `servo.h`. Both servos start there at power-up with their PWM off, and the run's arc starts there. The CLI controls servo 2 (PB6); `servo(95)` selects degrees and `servo(1556u)` selects microseconds. Send one command per line. `stop` keeps the servo PWM running so it holds its last angle. Switching the PWM off mid-pulse can throw the servo past its limit. Individual commands are rejected during autonomous run or a latched fault.
+The servo mapping is 0 degrees = 500 us, 90 degrees = 1500 us, and 180 degrees = 2500 us at 50 Hz. The centre, where the pod is straight, is **95 degrees (1556 us)**: `SERVO_CENTRE_ANGLE` in `servo.h`. Both servos start there at power-up with their PWM off, while the run's arc starts separately at **90 degrees (1500 us)** (`DEMO_START_ANGLE` in `robot_control.h`). The CLI controls servo 2 (PB6); `servo(95)` selects degrees and `servo(1556u)` selects microseconds. Send one command per line. `stop` keeps the servo PWM running so it holds its last angle. Switching the PWM off mid-pulse can throw the servo past its limit. Individual commands are rejected during autonomous run or a latched fault.
 
 For C code using robot state and fault checks:
 
@@ -262,69 +265,70 @@ Robot_SetServoPulseUs(2, 1556);    // Microseconds; enables servo 2
 Both functions return NULL on success or an error string. The low-level driver also provides `servo(2, 95)` and `Servo_SetPulseUs(2, 1556)`; these return HAL status and require `Servo_Start(2)` to enable output after initialization. In C, `1556u` is an unsigned integer, not a unit: use the separate pulse-width function. `SERVO_ANGLE_US(angle)` in `servo.h` converts an angle to its pulse width. Angles are nominal; confirm the mechanism can accommodate the commanded travel.
 ### Demo sequence (`run` or PC11/SW2)
 
-1. Home to **SW4 / PC15** with the DC motor off and servo 2 at **1556 us (95 degrees)**, the start of its arc. Zero is set where SW4 is first touched, after a 30 ms debounce.
-   - If SW4 is **already pressed** when the run starts (for example after a completed run), the carriage first **backs off 1500 steps** toward SW1. SW4 must then read released; if it is still pressed 30 ms later, a limit fault latches instead of moving further. Otherwise the carriage homes back to first touch as normal.
+1. Home to **SW4 / PC15** with the DC motor off and servo 2 at **1500 us (90 degrees)**, the start of its arc. Zero is set where SW4 is first touched, after a 30 ms debounce.
+   - If SW4 is **already pressed** when the run starts (for example when manually placed on the home switch), the carriage first **backs off 1500 steps** toward SW1. SW4 must then read released; if it is still pressed 30 ms later, a limit fault latches instead of moving further. Otherwise the carriage homes back to first touch as normal.
 2. Set position to zero and push outward toward **SW1**, with DC duty **-100%**.
-3. At **SW1**, reverse the stepper and DC motor (**+100%**) and follow the servo schedule backwards on the return to SW4. There is no step-count limit: only the limit switches reverse the run.
-4. Back at SW4 the run **ends**: the stepper and DC motor stop and the servo returns to the start of its arc (95 degrees, 1556 us). The CLI prints `RUN COMPLETE` with the home error. Send `run` or press the button for another cycle; a new run always homes again.
+3. At **157,297 steps**, reverse the stepper and DC motor (**+100%**) and follow the servo schedule backwards on the return toward SW4. The counted outward endpoint controls normal reversal; SW1 remains a backup. Return travel continues until physical SW4 activates, even if the counted position reaches zero first.
+4. When **physical SW4 activates**, the stepper stops immediately on detection. After 30 ms debounce confirms the switch, the DC motor stops and the run completes, holding the calibrated straight servo angle. A brief switch bounce resumes the return. There is no 5000-step return offset and no return overtravel. Send `run` or switch OFF then ON for another cycle; the next run backs off SW4 and homes again.
 
-`stop` or a run-button press during a run stops the stepper and DC motor where they are and ends the run; the servo holds its angle. `pause` freezes the run the same way but keeps it, and `continue` resumes it. A pause during a switch debounce re-checks the switch for a fresh 30 ms on `continue`. A pause during the back-off or an overtravel finishes the remaining steps.
+`stop` or switching the run switch OFF during a run stops the stepper and DC motor where they are and ends the run; the servo holds its angle. `pause` freezes the run the same way but keeps it, and `continue` resumes it. A pause during a switch debounce re-checks the switch for a fresh 30 ms on `continue`. A pause during the back-off or an overtravel finishes the remaining steps.
 
-Run preserves the selected stepper speed (16–2000 pulses/s). Set it while stopped:
+Set the three run speeds with one command while stopped:
 
 ```text
-stop
-stepper(speed,333)
+speed(1000,500,1000)
 run
-status
 ```
 
-333 is an example, not a demo speed setting. The existing startup default remains 500 pulses/s until changed; speed is not saved across reset. Position comes from emitted STEP pulses, not elapsed time or encoder feedback. Microstepping/mechanical calibration must match the supplied schedule. `status` reports homing/table phase, position from SW4, and servo pulse width.
+The arguments are **straight, turning, return**, in STEP pulses per second (each 16-2000). Homing and back-off use the straight speed. Outward travel switches to turning speed at 100,000 steps from SW4 first touch and keeps it to the outward reversal, including the 100-degree plateau. The entire return uses the third speed and stops on physical SW4. Limit overtravel shifts the reported transition position by the configured overtravel amount. Speed changes briefly stop and restart the pulse timer, preserving counted position; this is a discrete speed change, not an acceleration ramp.
+
+`status` shows the active speed under `STEPPER` and all three settings under `RUN SPEEDS`. Changes are rejected during running, paused runs, or manual stepper movement. `stepper(speed,n)` remains available and sets all three speeds to n, as well as the manual move speed. Manual moves otherwise use the current selected speed. Defaults are 1000/500/1500 (straight/turning/return); settings persist between runs but reset on power-up/reset.
+
+### Session straightness calibration
+
+Use an absolute manual command such as `servo(110)` to find where the head is physically straight. With the stepper, drill and arc test stopped, enter `calibrate(110)`. This saves 110 degrees as straight and commands servo 2 there. Any whole-degree value **0-135** is accepted; the upper limit leaves room for the full 45-degree sweep inside the servo's 0-180 command range.
+
+`straight()` commands servo 2 to the saved straight position without changing calibration. It works like a manual servo command: refused during a run (including pause) or a latched fault, and ends an active servo arc test.
+
+Calibration shifts homing, the entire outward/return path, the completion hold, and `servo(arc)` by `straight - 90` degrees. For example, 100 produces a 100-145 degree sweep, and 110 produces 110-155. Step positions, speeds, and endpoints are unchanged. Manual `servo(angle)` and `servo(pulseu)` remain absolute so you can locate straight without compounding the offset. Calibration is optional, persists across stop/new runs, and resets to 90 on power-up/reset. `calibrate(90)` also restores the default.
+
+`status`, `calibrate(status)`, and servo/run/stop/pause/continue/calibration responses report **TRUE (PATH)** for the original nominal path angle and **ADJUSTED (COMMAND)** for the calibrated absolute servo command. Neither is a measured position. The reported run range also shows the adjusted limits. `DATA` retains its column layout: `servo_us` is the adjusted command, while `pod_deg` stays relative to the calibrated straight position. The table below lists original path angles; add the calibration offset for adjusted angles.
 
 ### Servo steering schedule
 
-The servo schedule comes from the CAD model (`Steering_schedule_from_CAD.csv`, 21 Oct 2026). At each position it gives the pod angle that keeps the cutter tip on the bore centreline. The run's servo arc starts at **95 degrees (1556 us)**, where the CAD offset is zero, and never goes past **135 degrees (2000 us)**. Offsets use the nominal scale of 20 us per pod degree through the 1.8:1 gears. Degrees here use the same mapping as `servo(angle)`.
+The foam-clearance path uses the measured targets from 24 October 2026: 90 degrees at 100,000 steps; 100 at 105,000 and 115,000; 110 at 125,000; 116 at 135,000; 128 at 155,000; and 135 at the counted outward reversal position of 157,297. These are DATA positions from SW4 first touch, not the old CAD coordinates.
 
-The CSV counts steps from the CAD zero, which is the rear reversal point 1500 steps past SW4 first touch (398.87 steps/mm). With no limit overtravel, the firmware zeroes at SW4 first touch, so its positions are the CSV steps minus 1500.
+The controller holds 90 degrees before the first point and uses monotone cubic Hermite interpolation through the targets. The 100-degree plateau stays flat, the curve joins have continuous slope, and it eases into the 135-degree final hold without overshoot. Pulse commands are rounded to whole microseconds. Return travel retraces the same curve.
 
-| CSV steps | Position from SW4 first touch | Pod angle | Servo 2 (us) |
-|---:|---:|---:|---:|
-| 1,500–66,715 | 0–65,215 | 0.00° | 1556 |
-| 69,706 | 68,206 | 0.13° | 1559 |
-| 73,695 | 72,195 | 0.37° | 1563 |
-| 77,684 | 76,184 | 0.70° | 1570 |
-| 81,672 | 80,172 | 1.11° | 1578 |
-| 85,661 | 84,161 | 1.60° | 1588 |
-| 89,650 | 88,150 | 2.18° | 1600 |
-| 93,638 | 92,138 | 2.84° | 1613 |
-| 97,627 | 96,127 | 3.59° | 1628 |
-| 101,616 | 100,116 | 4.41° | 1644 |
-| 105,604 | 104,104 | 5.33° | 1663 |
-| 109,593 | 108,093 | 6.33° | 1683 |
-| 113,582 | 112,082 | 7.41° | 1704 |
-| 117,570 | 116,070 | 8.57° | 1727 |
-| 121,559 | 120,059 | 9.82° | 1752 |
-| 125,548 | 124,048 | 11.14° | 1779 |
-| 129,537 | 128,037 | 12.54° | 1807 |
-| 133,525 | 132,025 | 13.98° | 1836 |
-| 137,514 | 136,014 | 15.42° | 1864 |
-| 141,503 | 140,003 | 16.85° | 1893 |
-| 144,853 | 143,353 (mid-bore) | 18.06° | 1917 |
-| 145,491 | 143,991 | 18.29° | 1922 |
-| 149,480 | 147,980 | 19.72° | 1950 |
-| 153,469 | 151,969 | 21.16° | 1979 |
-| 156,289 | 154,789 (arc reaches 135°) | 22.20° | 2000 |
-| 157,457 | 155,957 | 22.59° → 22.20° | 2000 (capped) |
-| 160,250 | 158,750 (SW1 first touch) | 23.60° → 22.20° | 2000 (capped) |
-| 161,750 | 160,250 | 24.13° → 22.20° | 2000 (capped) |
+| Position (steps) | Servo angle (degrees) | Pulse (us) |
+|---:|---:|---:|
+| 0-100,000 | 90.00 | 1500 |
+| 102,500 | 95.00 | 1556 |
+| 105,000 | 100.00 | 1611 |
+| 110,000 | 100.00 | 1611 |
+| 115,000 | 100.00 | 1611 |
+| 117,500 | 101.21 | 1625 |
+| 120,000 | 104.06 | 1656 |
+| 122,500 | 107.38 | 1693 |
+| 125,000 | 110.00 | 1722 |
+| 130,000 | 113.19 | 1758 |
+| 135,000 | 116.00 | 1789 |
+| 140,000 | 118.42 | 1816 |
+| 145,000 | 120.45 | 1838 |
+| 150,000 | 123.26 | 1870 |
+| 155,000 | 128.00 | 1922 |
+| 156,000 | 131.21 | 1958 |
+| 156,500 | 133.28 | 1981 |
+| 157,000 | 134.72 | 1997 |
+| 157,297 | 135.00 | 2000 |
 
-Pulse widths are interpolated between adjacent rows and applied without a time-based ramp. The run follows the table all the way to SW1 and reverses there; there is no step-count limit. The table reaches the 135 degree end of the arc about 10 mm before SW1 (CSV 156,289), and the servo holds there to SW1 and beyond. That is 22.2 degrees of pod at the nominal scale, or about 20 degrees on the MG995 (measured at about 22 us per pod degree), inside the 23.5 degree keeper pocket. The return to SW4 ends the run. Independent `stepper(auto)` remains a stepper-only test and does not activate this servo/DC schedule.
+The run spans **90-135 degrees (1500-2000 us)**. Outward travel now reverses at a counted **157,297 steps**, 5000 before the observed SW1 hit at 162,297. Physical SW1 remains an early backup reversal; it is no longer required for the normal turnaround. The pulse timer prevents additional outward steps if the main loop is delayed. See [the path table](docs/foam-clearance-path.md). Physical foam clearance still needs a trial.
 
 #### Limit overtravel (dampened switches)
 
-`LIMIT_OVERTRAVEL_STEPS` in `Core/Inc/robot_control.h` is **0**, so the stepper reverses at first touch of each switch. Only once dampened switch mounts are fitted, set it to **1500** (about 3.8 mm). Each debounced SW1/SW4 press then drives up to 1500 more pulses before reversing. The zero point becomes the reversal point behind SW4, which is the CSV's own zero, so the table needs no change; `status` positions then count from that point rather than from first touch. The run-start back-off grows to 1500 + 1500 steps so the carriage clears the overtravel zone before homing.
+`LIMIT_OVERTRAVEL_STEPS` in `Core/Inc/robot_control.h` is **0**, so the stepper uses first touch for homing at SW4 and reversal at SW1. Only once dampened switch mounts are fitted, set it to **1500** (about 3.8 mm). Each debounced SW1 press or SW4 homing press then drives up to 1500 more pulses before reversing. During an autonomous outward run, this is capped at the counted outward endpoint; the normal counted turnaround adds no overtravel. The zero point becomes the reversal point behind SW4, so the path evaluator subtracts the configured overtravel from the reported position to preserve the same physical steering path; `status` positions count from that reversal point. The run-start back-off grows to 1500 + 1500 steps so the carriage clears the overtravel zone before homing.
 
-The host tests cover both settings, and the general parser and safety tests run in each. Test both before flashing an overtravel build: `-DLIMIT_OVERTRAVEL_STEPS=0U` and `-DLIMIT_OVERTRAVEL_STEPS=1500U`. On Linux, from the repository root:
+The host tests cover both settings, and the general parser and safety tests run in each. Test both before flashing an overtravel build: `-DLIMIT_OVERTRAVEL_STEPS=0U` and `-DLIMIT_OVERTRAVEL_STEPS=1500U`. On Windows, run `./tools/test-firmware.ps1` and `./tools/test-firmware.ps1 -OvertravelSteps 1500`. On Linux, from the repository root:
 
 ```sh
 gcc -std=c11 -DLIMIT_OVERTRAVEL_STEPS=1500U -Itests/host -IMETR4810_Team2_code/Core/Inc tests/host/test_control.c METR4810_Team2_code/Core/Src/{robot_control,serial,motor,stepper,servo,switch,status_led}.c -o test_control && ./test_control
@@ -334,14 +338,18 @@ gcc -std=c11 -DLIMIT_OVERTRAVEL_STEPS=1500U -Itests/host -IMETR4810_Team2_code/C
 
 The drill polarity for the demo is now **-100% outward toward SW1**, **+100% returning toward SW4**. Initial homing keeps the DC motor off. Manual `motor(duty)` commands retain their signed-duty meaning.
 
-The return uses a fixed reference captured at the actual outward turnaround: `position = outward endpoint - pulses emitted on return`. An SW1 press anywhere therefore retraces the part of the schedule actually reached. Brief switch bounce pauses and resumes without changing the reference. Both directions use the same position-to-pulse table and the selected CLI speed.
+The return uses a fixed reference captured at the actual outward turnaround: `position = outward endpoint - pulses emitted on return`. A counted outward reversal, or an early SW1 press, retraces the part of the schedule actually reached. Brief switch bounce pauses and resumes without changing the reference. Both directions use the same position-to-pulse curve, with their configured section speeds.
 
 Each confirmed demo limit produces a serial line such as:
 
 ```text
-TURN: SW1; POSITION=158750; SERVO=2000 US; NEXT=SW4; DC=100%; HOME ERROR=0
+TURN: OUTWARD LIMIT; POSITION=157297; SERVO=2000 US; NEXT=SW4; DC=100%; RETURN TARGET=SW4
 ```
 
-`status` also shows `OUTWARD END`, `RETURN PULSES`, and `LAST HOME ERROR`. Home error is the outward pulse count minus the return pulse count when SW4 first triggers, less any limit overtravel (positive = fewer pulses on return). These are commanded pulses, not encoder measurements. Counts can reveal switch-position differences, but cannot directly detect mechanical backlash, servo lag, or missed motor steps. Do not shift only the return table: that would deliberately command a different path.
+`status` shows `OUTWARD END`, `RETURN PULSES`, `RETURN TARGET=SW4`, and `HOME ERROR`. Return travel is continuous toward SW4, with no counted stopping endpoint. It passes the former 5000-step offset and, if necessary, the estimated zero until SW4 is detected. Pause/continue resumes toward that same switch. The stepper stops on switch detection; confirmation requires 30 ms, and the DC motor then stops as the run completes. False switch bounce resumes motion. No return overtravel is driven, even when homing overtravel is enabled.
+
+At completion, `HOME ERROR` is outward pulses minus return pulses minus configured homing overtravel. Position is referenced to SW4 first touch: zero normally, or `LIMIT_OVERTRAVEL_STEPS` if homing placed zero behind the switch. The servo holds its calibrated straight command. The outward endpoint remains 157,297 steps from SW4 first touch.
+
+These are counted command pulses, not encoder measurements. Missed steps can change the physical stopping position.
 
 For a return mismatch, capture the outward TURN line and `status` shortly afterward while retracting. Compare the reported servo target to the observed mechanism before changing angle calibration or compensating for backlash.

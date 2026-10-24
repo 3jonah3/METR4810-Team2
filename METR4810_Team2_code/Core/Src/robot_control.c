@@ -13,63 +13,65 @@ static RobotStatus status;
 static uint8_t debouncing, overtravel;
 static uint32_t arc_test_start;
 static uint32_t debounce_start;
-static uint8_t button_raw, button_stable;
-static uint32_t button_changed;
+static uint8_t run_switch_raw, run_switch_stable;
+static uint32_t run_switch_changed;
 static void start_auto(void);
 static void arc_test_update(void);
+static void finish_run(void);
+static void turn_at_outward_end(void);
 static uint32_t demo_leg_start_pulses, demo_leg_start_position;
 
-/* CAD steering schedule (Steering_schedule_from_CAD.csv, 21 Oct 2026): servo offset
-   from the start of the arc that keeps the cutter tip on the bore centreline, at the nominal
-   DEMO_US_PER_POD_DEG scale. CSV steps count from the CAD zero,
-   the rear reversal point 1500 steps past SW4 first touch (398.87 steps/mm).
-   The run follows it out to SW1 (CSV 160250 at first touch).
-   Interpolate pulse widths, not the rounded angles shown in the guide. */
-#define CAD_ZERO_PAST_SW4 1500U
-/* The arc ends at 135 degrees, so the offset is capped there for the last ~10 mm
-   before SW1. That is 22.2 degrees of pod at the nominal scale (about 20 on the
-   MG995), inside the 23.5 degree keeper. */
-#define DEMO_MAX_OFFSET_US (DEMO_END_PULSE_US - DEMO_START_PULSE_US)
-static const struct { uint32_t step; unsigned offset; } demo_schedule[] = {
-    {0U, 0U}, {66715U, 0U}, {69706U, 3U}, {73695U, 7U},
-    {77684U, 14U}, {81672U, 22U}, {85661U, 32U}, {89650U, 44U},
-    {93638U, 57U}, {97627U, 72U}, {101616U, 88U}, {105604U, 107U},
-    {109593U, 127U}, {113582U, 148U}, {117570U, 171U}, {121559U, 196U},
-    {125548U, 223U}, {129537U, 251U}, {133525U, 280U}, {137514U, 308U},
-    {141503U, 337U}, {144853U, 361U}, {145491U, 366U}, {149480U, 394U},
-    {153469U, 423U}, {157457U, 452U}, {160250U, 472U}, {161750U, 483U}
+/* Foam-clearance path, 24 Oct 2026. Anchors are servo degrees at DATA positions
+   measured from SW4 first touch (with overtravel disabled). The final anchor is
+   the counted outward reversal position, 5000 steps before the measured SW1 hit.
+   Monotone cubic Hermite interpolation: weighted harmonic interior slopes,
+   zero slope at the endpoints and on both sides of the 100-degree plateau.
+   Slopes are degrees per 1000 steps. The return uses this exact same curve. */
+static const struct { uint32_t step; float angle, slope; } demo_schedule[] = {
+    {100000U, 90.0f, 0.0f},
+    {105000U, 100.0f, 0.0f},
+    {115000U, 100.0f, 0.0f},
+    {125000U, 110.0f, 0.75f},
+    {135000U, 116.0f, 0.6f},
+    {155000U, 128.0f, 1.219093498f},
+    {RUN_OUTWARD_END_STEPS, 135.0f, 0.0f}
 };
 #define DEMO_SCHEDULE_ROWS (sizeof demo_schedule / sizeof demo_schedule[0])
 
-/* Demo position (pulses from the SW4 reversal point) in CSV steps. */
-static uint32_t cad_step(uint32_t position)
+/* Preserve the physical path if zero moves behind SW4 for limit overtravel. */
+static uint32_t path_step(uint32_t position)
 {
-    uint64_t step = (uint64_t)position + CAD_ZERO_PAST_SW4;
-    step = step > LIMIT_OVERTRAVEL_STEPS ? step - LIMIT_OVERTRAVEL_STEPS : 0U;
-    return step > UINT32_MAX ? UINT32_MAX : (uint32_t)step;
+    return position > LIMIT_OVERTRAVEL_STEPS ? position - LIMIT_OVERTRAVEL_STEPS : 0U;
 }
 
-/* Servo pulse for a CSV step: linear between rows, held after the last row, and never
-   past the keeper cap. */
 static unsigned demo_pulse(uint32_t step)
 {
-    /* Hold the final angle if travel continues beyond the table. */
-    unsigned offset = demo_schedule[DEMO_SCHEDULE_ROWS - 1U].offset;
+    if (step <= demo_schedule[0].step) return DEMO_START_PULSE_US;
     for (unsigned i = 1; i < DEMO_SCHEDULE_ROWS; ++i) {
         if (step <= demo_schedule[i].step) {
-            uint32_t span = demo_schedule[i].step - demo_schedule[i - 1].step;
-            uint32_t into = step - demo_schedule[i - 1].step;
-            offset = demo_schedule[i - 1].offset +
-                (into * (demo_schedule[i].offset - demo_schedule[i - 1].offset) + span / 2U) / span;
-            break;
+            float span = (float)(demo_schedule[i].step - demo_schedule[i - 1].step);
+            float t = (float)(step - demo_schedule[i - 1].step) / span;
+            float t2 = t * t, t3 = t2 * t;
+            float angle = (2.0f*t3 - 3.0f*t2 + 1.0f) * demo_schedule[i - 1].angle +
+                (t3 - 2.0f*t2 + t) * (span / 1000.0f) * demo_schedule[i - 1].slope +
+                (-2.0f*t3 + 3.0f*t2) * demo_schedule[i].angle +
+                (t3 - t2) * (span / 1000.0f) * demo_schedule[i].slope;
+            /* Bound round-off locally as well as protecting the overall arc. */
+            if (angle < demo_schedule[i - 1].angle) angle = demo_schedule[i - 1].angle;
+            if (angle > demo_schedule[i].angle) angle = demo_schedule[i].angle;
+            unsigned pulse = (unsigned)(SERVO_MIN_PULSE_US + angle *
+                (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US) / SERVO_MAX_ANGLE + 0.5f);
+            if (pulse < DEMO_START_PULSE_US) return DEMO_START_PULSE_US;
+            return pulse > DEMO_END_PULSE_US ? DEMO_END_PULSE_US : pulse;
         }
     }
-    return DEMO_START_PULSE_US + (offset > DEMO_MAX_OFFSET_US ? DEMO_MAX_OFFSET_US : offset);
+    return DEMO_END_PULSE_US; /* Clamp at the final path angle. */
 }
 
 /* Command servo 2 only when the pulse changes, and keep the reported angle in step. */
 static void demo_servo(unsigned pulse)
 {
+    pulse = (unsigned)((int)pulse + (int)SERVO_ANGLE_US(status.straight_angle) - (int)DEMO_START_PULSE_US);
     if (status.servo_pulse_us[1] == (int)pulse) return;
     if (Servo_SetPulseUs(2U, pulse) != HAL_OK) { Error_Handler(); return; }
     status.servo_pulse_us[1] = (int)pulse;
@@ -90,22 +92,22 @@ static void demo_update_position(void)
         status.return_steps = delta;
         status.demo_position = delta > demo_leg_start_position ? 0U : demo_leg_start_position - delta;
     }
-    demo_servo(demo_pulse(cad_step(status.demo_position)));
+    demo_servo(demo_pulse(path_step(status.demo_position)));
 }
 
-/* PC11 run button: returns 1 once per debounced press. */
-static uint8_t run_button_pressed(void)
+/* PC11 maintained run switch: report either debounced edge once. */
+static uint8_t run_switch_changed_state(void)
 {
     uint8_t pressed = Switch_IsPressed(2);
     uint32_t now = HAL_GetTick();
-    if (pressed != button_raw) {
-        button_raw = pressed;
-        button_changed = now;
+    if (pressed != run_switch_raw) {
+        run_switch_raw = pressed;
+        run_switch_changed = now;
     }
-    if (button_stable != button_raw &&
-        (uint32_t)(now - button_changed) >= SWITCH_DEBOUNCE_MS) {
-        button_stable = button_raw;
-        return button_stable; /* One event per press; release must also debounce. */
+    if (run_switch_stable != run_switch_raw &&
+        (uint32_t)(now - run_switch_changed) >= SWITCH_DEBOUNCE_MS) {
+        run_switch_stable = run_switch_raw;
+        return 1; /* Both ON and OFF transitions must debounce. */
     }
     return 0;
 }
@@ -116,15 +118,42 @@ static uint8_t target_direction(void)
     return status.target == 4U ? DIR_TO_SWITCH4 : (DIR_TO_SWITCH4 ^ 1U);
 }
 
+static uint32_t run_speed(void)
+{
+    if (status.demo_homing) return status.straight_speed;
+    if (status.target == 4U) return status.return_speed;
+    return path_step(status.demo_position) >= demo_schedule[0].step ?
+        status.curve_speed : status.straight_speed;
+}
+
 static void start_target(void)
 {
-    Stepper1_Start(target_direction());
+    if (status.state == ROBOT_RUNNING) {
+        status.speed = run_speed();
+        Stepper1_SetSpeed(status.speed);
+    }
+    if (status.state == ROBOT_RUNNING && !status.demo_homing && status.target == 1U) {
+        if (status.demo_position >= RUN_OUTWARD_STOP_POSITION) turn_at_outward_end();
+        else Stepper1_Move(target_direction(), RUN_OUTWARD_STOP_POSITION - status.demo_position);
+    } else Stepper1_Start(target_direction());
+}
+
+/* The driver changes speed only while stopped. Account for an in-flight pulse
+   before restarting, so the servo and return reference keep the same position. */
+static void update_run_speed(void)
+{
+    if (status.state != ROBOT_RUNNING || status.paused || status.demo_homing ||
+        debouncing || overtravel || !Stepper1_IsBusy() || status.speed == run_speed()) return;
+    Stepper1_Stop();
+    demo_update_position();
+    start_target();
 }
 
 /* Reverse at the target limit switch, toward the other one. */
 static void turn_around(void)
 {
     if (status.state == ROBOT_RUNNING) {
+        status.turn_at_position = 0;
         status.turn_switch = status.target;
         status.turn_position = status.demo_position;
         status.turn_pulse_us = (unsigned)status.servo_pulse_us[1];
@@ -148,10 +177,16 @@ static void turn_around(void)
     start_target();
 }
 
-/* One cycle per run: back at SW4 after SW1, stop there with the servo at the arc start. */
+static void turn_at_outward_end(void)
+{
+    turn_around();
+    status.turn_at_position = 1;
+}
+
+/* Physical SW4 confirmed: stop at first touch, without return overtravel. */
 static void finish_run(void)
 {
-    status.demo_position = 0U;
+    status.demo_position = RUN_HOME_POSITION;
     demo_servo(DEMO_START_PULSE_US);
     Robot_Stop();
     status.run_complete = 1U;
@@ -169,10 +204,16 @@ static void limit_confirmed(void)
 {
     uint32_t steps = LIMIT_OVERTRAVEL_STEPS;
     if (status.state == ROBOT_RUNNING && status.target == 4U && !status.demo_homing) {
-        /* First touch is expected LIMIT_OVERTRAVEL_STEPS before the zero point. */
-        int64_t error = (int64_t)status.outward_steps - status.return_steps - LIMIT_OVERTRAVEL_STEPS;
+        int64_t error = (int64_t)status.outward_steps - status.return_steps - RUN_HOME_POSITION;
         status.home_step_error = error > INT32_MAX ? INT32_MAX :
             error < INT32_MIN ? INT32_MIN : (int32_t)error;
+        finish_run();
+        return;
+    }
+    if (status.state == ROBOT_RUNNING && !status.demo_homing && status.target == 1U) {
+        uint32_t left = status.demo_position < RUN_OUTWARD_STOP_POSITION ?
+            RUN_OUTWARD_STOP_POSITION - status.demo_position : 0U;
+        if (steps > left) steps = left; /* Never overtravel beyond the counted outward end. */
     }
     if (steps) {
         overtravel = 1;
@@ -184,9 +225,13 @@ void Robot_Init(TIM_HandleTypeDef *motor, TIM_HandleTypeDef *stepper, TIM_Handle
 {
     status.state = ROBOT_IDLE;
     status.step_mode = ROBOT_STEP_STOPPED;
-    status.speed = 500U;
+    status.straight_speed = 1000U;
+    status.curve_speed = 500U;
+    status.return_speed = 1500U;
+    status.speed = status.straight_speed;
     status.target = 4U;
     status.duty = status.fault = 0;
+    status.straight_angle = DEMO_START_ANGLE;
     status.servo_angle[0] = status.servo_angle[1] = -1;
     status.servo_pulse_us[0] = status.servo_pulse_us[1] = -1;
     status.demo_position = 0;
@@ -194,7 +239,7 @@ void Robot_Init(TIM_HandleTypeDef *motor, TIM_HandleTypeDef *stepper, TIM_Handle
     status.outward_steps = status.return_steps = 0;
     status.home_step_error = 0;
     status.turn_number = status.turn_position = status.turn_pulse_us = 0;
-    status.turn_switch = 0;
+    status.turn_switch = status.turn_at_position = 0;
     status.run_complete = status.paused = 0;
     status.pause_remaining = 0;
     status.arc_test = 0;
@@ -204,9 +249,9 @@ void Robot_Init(TIM_HandleTypeDef *motor, TIM_HandleTypeDef *stepper, TIM_Handle
     Stepper1_SetSpeed(status.speed);
     Servo_Init(servos); /* Initializes targets without enabling PWM. */
     debouncing = overtravel = 0;
-    /* Holding the button during reset must not start motion. */
-    button_raw = button_stable = Switch_IsPressed(2);
-    button_changed = HAL_GetTick();
+    /* An ON switch at reset must go OFF then ON before it can start motion. */
+    run_switch_raw = run_switch_stable = Switch_IsPressed(2);
+    run_switch_changed = HAL_GetTick();
     Robot_Update();
 }
 
@@ -227,15 +272,15 @@ void Robot_Stop(void)
 
 void Robot_Update(void)
 {
-    uint8_t toggle = run_button_pressed();
+    uint8_t switch_changed = run_switch_changed_state();
     if (!status.fault && Switch_IsPressed(1) && Switch_IsPressed(4)) status.fault = ROBOT_FAULT_BOTH_LIMITS;
     if (status.fault) {
         Robot_Stop();
         return;
     }
-    if (toggle) {
-        if (status.state == ROBOT_RUNNING) Robot_Stop();
-        else start_auto();
+    if (switch_changed) {
+        if (!run_switch_stable) Robot_Stop();
+        else if (status.state != ROBOT_RUNNING) start_auto();
     }
     if (status.state == ROBOT_RUNNING) demo_update_position();
     if (status.state == ROBOT_RUNNING && status.paused) return; /* Frozen until continue or stop. */
@@ -278,9 +323,12 @@ void Robot_Update(void)
             debounce_start = HAL_GetTick();
         }
     }
+    if (status.state == ROBOT_RUNNING && !status.demo_homing && status.target == 1U &&
+        !debouncing && !overtravel && !Stepper1_IsBusy()) turn_at_outward_end();
+    update_run_speed();
 }
 
-/* servo(arc): ramp out to the end of the arc, hold, ramp back, then stay at the centre. */
+/* servo(arc): ramp out to the end of the arc, hold, ramp back, then stay at the arc start. */
 static void arc_test_update(void)
 {
     uint32_t t = HAL_GetTick() - arc_test_start;
@@ -325,6 +373,8 @@ static void begin_auto(void)
 static void start_auto(void)
 {
     Stepper1_Stop();
+    status.speed = status.straight_speed;
+    Stepper1_SetSpeed(status.speed);
     Motor1_SetDuty(0);
     /* Re-home on every run; never treat an arbitrary starting point as zero.
        A running servo PWM takes the new width at its next period, without a glitch. */
@@ -436,14 +486,24 @@ const char *Robot_Move(int32_t steps)
     return NULL;
 }
 
-const char *Robot_SetSpeed(uint32_t speed)
+const char *Robot_SetRunSpeeds(uint32_t straight, uint32_t curve, uint32_t reverse)
 {
-    if (speed < 16 || speed > 2000) return "INVALID SPEED: USE 16..2000 STEPS/S";
+    if (straight < 16 || straight > 2000 || curve < 16 || curve > 2000 ||
+        reverse < 16 || reverse > 2000) return "INVALID SPEED: USE 16..2000 STEPS/S";
     if (status.state == ROBOT_RUNNING || status.step_mode != ROBOT_STEP_STOPPED)
         return "STOP STEPPER BEFORE CHANGING SPEED";
-    status.speed = speed;
-    Stepper1_SetSpeed(speed);
+    status.straight_speed = straight;
+    status.curve_speed = curve;
+    status.return_speed = reverse;
+    status.speed = straight;
+    Stepper1_SetSpeed(straight);
     return NULL;
+}
+
+/* Legacy single-speed command selects a uniform profile and manual speed. */
+const char *Robot_SetSpeed(uint32_t speed)
+{
+    return Robot_SetRunSpeeds(speed, speed, speed);
 }
 
 const char *Robot_SetMotor(int duty)
@@ -455,6 +515,21 @@ const char *Robot_SetMotor(int duty)
     Motor1_SetDuty((int)duty);
     status.duty = duty;
     status.state = ROBOT_IDLE;
+    return NULL;
+}
+
+const char *Robot_Calibrate(unsigned angle)
+{
+    if (angle > SERVO_MAX_ANGLE - (DEMO_END_ANGLE - DEMO_START_ANGLE))
+        return "CALIBRATION OUT OF RANGE: USE 0..135 (FULL SWEEP MUST FIT 0..180)";
+    const char *error = motion_allowed(1);
+    if (error) return error;
+    if (status.step_mode != ROBOT_STEP_STOPPED || status.duty || status.arc_test)
+        return "STOP ALL MOTION BEFORE CALIBRATING";
+    /* Manual servo commands stay absolute, so the user can find straight first. */
+    error = Robot_SetServo(2U, angle);
+    if (error) return error;
+    status.straight_angle = angle;
     return NULL;
 }
 

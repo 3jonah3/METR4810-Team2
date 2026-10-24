@@ -1,4 +1,5 @@
-param([string]$LccRoot = 'C:/Program Files/MATLAB/R2026a/sys/lcc64/lcc64')
+param([string]$LccRoot = 'C:/Program Files/MATLAB/R2026a/sys/lcc64/lcc64',
+      [ValidateSet(0,1500)][int]$OvertravelSteps = 0)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/..").Path
 $output = Join-Path $root 'METR4810_Team2_code/build/host'
@@ -14,7 +15,7 @@ foreach ($file in $inputs) {
     # Keep compiler inputs and outputs in the ignored build directory.
     $copy = Join-Path $output ([IO.Path]::GetFileName($file))
     Copy-Item -LiteralPath $file -Destination $copy
-    & "$LccRoot/bin/lcc64.exe" "-I$LccRoot/include64" "-I$root/tests/host" "-I$root/METR4810_Team2_code/Core/Inc" $copy
+    & "$LccRoot/bin/lcc64.exe" "-DLIMIT_OVERTRAVEL_STEPS=$OvertravelSteps" "-I$LccRoot/include64" "-I$root/tests/host" "-I$root/METR4810_Team2_code/Core/Inc" $copy
     if ($LASTEXITCODE) { throw "Compile failed: $file" }
     $objects += [IO.Path]::ChangeExtension($copy, '.obj')
 }
