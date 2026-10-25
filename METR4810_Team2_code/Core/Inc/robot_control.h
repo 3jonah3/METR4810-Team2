@@ -1,113 +1,382 @@
 #ifndef ROBOT_CONTROL_H
 #define ROBOT_CONTROL_H
+
 #include "stm32g4xx_hal.h"
 #include "servo.h"
 
-/* STEP pulses driven past a debounced SW1/SW4 press before reversing; the SW4
-   reversal point is position zero. Keep 0 until dampened switch mounts are
-   fitted, then 1500. */
+/* Optional travel beyond a debounced homing/limit press, in STEP pulses.
+ * Leave disabled until dampened switch mounts are fitted. Final return to
+ * physical SW4 never uses overtravel. The internal origin is behind SW4 when
+ * this option is enabled; path coordinates compensate for that shift.
+ */
 #ifndef LIMIT_OVERTRAVEL_STEPS
 #define LIMIT_OVERTRAVEL_STEPS 0U
 #endif
-/* A run that starts with SW4 pressed first moves this far toward SW1, checks SW4
-   has released, then homes to first touch as normal. */
-/* Autonomous outward endpoint; return ends on physical SW4. */
-/* Measured SW1 hit: 162297; reverse 5000 steps earlier. */
+
+/* Reverse 5000 steps before the measured SW1 hit at 162297. */
 #define RUN_OUTWARD_END_STEPS 157297U
-#define RUN_OUTWARD_STOP_POSITION (RUN_OUTWARD_END_STEPS + LIMIT_OVERTRAVEL_STEPS)
-#define RUN_HOMING_SPEED 2000U /* Fixed for both programs, including start back-off. */
+#define RUN_OUTWARD_STOP_POSITION \
+    (RUN_OUTWARD_END_STEPS + LIMIT_OVERTRAVEL_STEPS)
+
+/* Both programs home/back off at this fixed speed, in STEP pulses/s. */
+#define RUN_HOMING_SPEED 2000U
 #define RUN2_CURVE_START_STEPS 95000U
-#define RUN2_RETRACT_POSITION (RUN2_CURVE_START_STEPS + LIMIT_OVERTRAVEL_STEPS)
+#define RUN2_RETRACT_POSITION \
+    (RUN2_CURVE_START_STEPS + LIMIT_OVERTRAVEL_STEPS)
 #define RUN2_END_ANGLE 145
-#define ROBOT_FAULT_RUN2_LIMIT 3U /* Unexpected physical limit during a counted run2 leg. */
-typedef enum { RUN2_CUT1, RUN2_RETRACT1, RUN2_CUT2, RUN2_RETURN2 } RobotRun2Phase;
-#define RUN_HOME_POSITION LIMIT_OVERTRAVEL_STEPS /* Expected SW4 first-touch position. */
+
+/* Unexpected physical limit during a counted run2 leg. */
+#define ROBOT_FAULT_RUN2_LIMIT 3U
+
+/* Run2 phases after homing, in execution order. */
+typedef enum {
+    RUN2_CUT1,
+    RUN2_RETRACT1,
+    RUN2_CUT2,
+    RUN2_RETURN2
+} RobotRun2Phase;
+
+/* Expected SW4 first-touch position in the internal coordinate system. */
+#define RUN_HOME_POSITION LIMIT_OVERTRAVEL_STEPS
 #define RUN_START_BACKOFF_STEPS (1500U + LIMIT_OVERTRAVEL_STEPS)
-/* status.fault values; any non-zero fault stops everything until reset. */
+
+/* Nonzero faults stop movement and remain latched until reset. */
 #define ROBOT_FAULT_BOTH_LIMITS 1U /* SW1 and SW4 pressed together. */
-#define ROBOT_FAULT_SW4_STUCK 2U /* SW4 still pressed after the run-start back-off. */
-/* The run's servo arc: it starts at 90 degrees (path offset 0) and never goes
-   past DEMO_END_ANGLE. */
+#define ROBOT_FAULT_SW4_STUCK 2U /* SW4 still pressed after backing off. */
+
+/* Base arc for run, cut 1 and servo(arc); cut 2 expands this to 145 degrees. */
 #define DEMO_START_ANGLE 90
-#define DEMO_START_PULSE_US SERVO_ANGLE_US(DEMO_START_ANGLE) /* 1500 us. */
+#define DEMO_START_PULSE_US SERVO_ANGLE_US(DEMO_START_ANGLE)
 #define DEMO_END_ANGLE 135
-#define DEMO_END_PULSE_US SERVO_ANGLE_US(DEMO_END_ANGLE) /* 2000 us. */
-/* servo(arc) timing: sweep out, hold at the end, sweep back. */
+#define DEMO_END_PULSE_US SERVO_ANGLE_US(DEMO_END_ANGLE)
+
+/* Timed servo test and nominal pulse-to-pod-angle scale through the gears. */
 #define ARC_TEST_SWEEP_MS 4000U
 #define ARC_TEST_HOLD_MS 1000U
-#define DEMO_US_PER_POD_DEG 20U /* Nominal scale through the 1.8:1 gears. */
+#define DEMO_US_PER_POD_DEG 20U
 
-/* RUNNING means a demo run is active (possibly paused). IDLE covers manual CLI use. */
-typedef enum { ROBOT_IDLE, ROBOT_RUNNING, ROBOT_STOPPED } RobotState;
-typedef enum { ROBOT_STEP_STOPPED, ROBOT_STEP_AUTO, ROBOT_STEP_MANUAL } RobotStepMode;
-/* Everything the CLI reports. Read-only outside robot_control.c. */
+/* RUNNING includes paused runs; IDLE permits independent actuator commands. */
+typedef enum {
+    ROBOT_IDLE,
+    ROBOT_RUNNING,
+    ROBOT_STOPPED
+} RobotState;
+
+/* AUTO includes full programs and the stepper-only limit-to-limit test. */
+typedef enum {
+    ROBOT_STEP_STOPPED,
+    ROBOT_STEP_AUTO,
+    ROBOT_STEP_MANUAL
+} RobotStepMode;
+
+/* Live controller state, read-only outside robot_control.c. Position and
+ * servo fields describe commands/counts, not measured mechanical feedback.
+ */
 typedef struct {
     RobotState state;
     RobotStepMode step_mode;
-    uint32_t straight_speed, curve_speed, return_speed; /* Run profile, STEP pulses/s. */
-    uint32_t run2_speeds[5]; /* straight1, curve1, retract1, curve2, return2. */
+
+    /* Single-cut profile in STEP pulses/s. */
+    uint32_t straight_speed;
+    uint32_t curve_speed;
+    uint32_t return_speed;
+    /* straight1, curve1, retract1, curve2, return2. */
+    uint32_t run2_speeds[5];
     uint8_t run2;
     RobotRun2Phase run2_phase;
-    uint32_t speed; /* Stepper speed in STEP pulses per second. */
-    uint8_t target, fault; /* target: switch being driven toward (1 or 4); fault: ROBOT_FAULT_* or 0. */
-    int duty; /* DC drill duty, -100..100 percent. */
-    unsigned straight_angle; /* Session-only absolute servo angle corresponding to path 90 degrees. */
-    int servo_angle[2]; /* -1 until explicitly commanded */
-    int servo_pulse_us[2]; /* Exact target width; -1 until commanded. */
-    uint32_t demo_position; /* STEP pulses from the SW4 reversal point; not encoder feedback. */
-    uint8_t demo_homing; /* 1 until SW4 first touch sets zero. */
-    uint8_t demo_backoff; /* 1 while a run that started on SW4 backs off before homing. */
-    uint32_t outward_steps, return_steps; /* Last outward endpoint and current return count. */
-    int32_t home_step_error; /* Outward count minus return count minus homing overtravel at SW4 first touch. */
-    uint32_t turn_number, turn_position;
+    uint32_t speed; /* Active stepper speed, STEP pulses/s. */
+    uint8_t target; /* Direction target: SW1 or SW4. */
+    uint8_t fault; /* Zero or a latched ROBOT_FAULT_* value. */
+    int duty; /* Signed drill duty, -100..100 percent. */
+
+    /* Absolute servo command corresponding to path angle 90 degrees. */
+    unsigned straight_angle;
+    int servo_angle[2]; /* Nominal degrees; -1 until commanded. */
+    int servo_pulse_us[2]; /* Exact pulse widths; -1 until commanded. */
+
+    uint32_t demo_position; /* STEP pulses from the homed origin. */
+    uint8_t demo_homing; /* Includes optional homing overtravel. */
+    uint8_t demo_backoff; /* Clearing an already-pressed SW4 before homing. */
+    uint32_t outward_steps; /* Most recent outward endpoint. */
+    uint32_t return_steps; /* Pulses emitted on the current return. */
+    /* outward_steps - return_steps - homing overtravel at SW4 first touch. */
+    int32_t home_step_error;
+
+    uint32_t turn_number; /* Event counter used by serial reporting. */
+    uint32_t turn_position;
     unsigned turn_pulse_us;
-    uint8_t turn_at_position; /* 1 for counted outward reversal, 0 for physical switch. */
-    uint8_t turn_switch; /* Limit switch (1 or 4) of the last demo turn. */
-    uint8_t run_complete; /* 1 once a run has finished its return at physical SW4. */
-    uint8_t paused; /* 1 while a run is frozen, waiting for continue or stop. */
-    uint32_t pause_remaining; /* Counted pulses remaining at pause (outward, back-off, or overtravel). */
-    uint8_t arc_test; /* 1 while servo(arc) is sweeping. */
-    uint32_t arc_tests_done; /* Sweeps that finished back at the centre. */
+    uint8_t turn_at_position; /* Counted reversal rather than a limit hit. */
+    uint8_t turn_switch; /* Direction target of the last turn. */
+    uint8_t run_complete; /* Final return reached physical SW4. */
+    uint8_t paused;
+    uint32_t pause_remaining; /* Unissued pulses saved for continue. */
+    uint8_t arc_test;
+    uint32_t arc_tests_done; /* Tests completed at calibrated straight. */
 } RobotStatus;
 
-/* Start the drivers with the stepper and DC motor off and no servo signal. Call once after the MX inits. */
-void Robot_Init(TIM_HandleTypeDef *motor, TIM_HandleTypeDef *stepper, TIM_HandleTypeDef *servos);
-/* Check limits, faults and the PC11 run switch, then advance any run. Call on every main-loop pass. */
+/* Robot_Init()
+ * ------------
+ * Initialise the controller and drivers after CubeMX setup. Motors start
+ * stopped and servo PWM starts disabled.
+ *
+ * motor: Initialised TIM1 drill handle.
+ * stepper: Initialised TIM16 STEP handle.
+ * servos: Initialised TIM4 servo handle.
+ *
+ * Returns: None.
+ * Global variables modified: status, debounce/run-switch state, and actuator
+ * driver state.
+ * Errors: Invalid driver handles or failed PWM setup enter Error_Handler().
+ */
+void Robot_Init(TIM_HandleTypeDef* motor, TIM_HandleTypeDef* stepper,
+        TIM_HandleTypeDef* servos);
+
+/* Robot_Update()
+ * --------------
+ * Service limits, the maintained run switch, run phases and servo position
+ * without waiting for travel. Call from every main-loop pass.
+ *
+ * Returns: None.
+ * Global variables modified: status, debounce/overtravel state, run-switch
+ * state and driver outputs.
+ * Errors: Limit faults latch in status.fault and stop motion.
+ */
 void Robot_Update(void);
-/* Stop the stepper and DC motor where they are and end any run. The servo keeps its angle. */
+
+/* Robot_Stop()
+ * ------------
+ * Cancel autonomous/manual movement and the arc test. Stop STEP pulses and
+ * drill duty while retaining servo PWM, calibration and faults.
+ *
+ * Returns: None.
+ * Global variables modified: status, debouncing, overtravel and
+ * stepper/motor state.
+ * Errors: None.
+ */
 void Robot_Stop(void);
-const RobotStatus *Robot_GetStatus(void);
 
-/* The commands below return NULL on success, or a short error message for the CLI. */
+/* Robot_GetStatus()
+ * -----------------
+ * Expose the controller-owned live status to main-loop readers.
+ *
+ * Returns: Read-only pointer valid for the lifetime of the firmware.
+ * Global variables modified: None.
+ * Errors: None.
+ */
+const RobotStatus* Robot_GetStatus(void);
 
-/* One demo cycle: home to SW4, drive out to the counted outward endpoint, return to physical SW4 and stop. */
-const char *Robot_StartAuto(void);
-/* Two cuts (135 then 145 degrees), intermediate retract to 95000, final return to SW4. */
-const char *Robot_StartAuto2(void);
-/* Atomically set five run2 section speeds (16..2000), while stopped; homing stays fixed. */
-const char *Robot_SetRun2Speeds(const uint32_t speeds[5]);
-/* Freeze a run in place without ending it. */
-const char *Robot_Pause(void);
-/* Resume a paused run on the same leg, from where it stopped. */
-const char *Robot_Continue(void);
-/* Servo 2 sweeps the run's arc (centre, end, centre) with nothing else moving. */
-const char *Robot_ServoArcTest(void);
-/* Stepper-only test: travel between SW1 and SW4 until stopped. Leaves the DC motor alone. */
-const char *Robot_StepperAuto(void);
-/* Counted move; positive steps go toward SW4. Stops early at the target switch. */
-const char *Robot_Move(int32_t steps);
-/* 16..2000 pulses per second. The stepper must be stopped. */
-const char *Robot_SetSpeed(uint32_t speed);
-/* Configure all three run sections atomically while stopped. Homing/back-off always use RUN_HOMING_SPEED. */
-const char *Robot_SetRunSpeeds(uint32_t straight, uint32_t curve, uint32_t reverse);
-/* Signed duty, -100..100 percent. 0 stops the motor. */
-const char *Robot_SetMotor(int duty);
-/* Servo target as a nominal angle (0..180) or a pulse width (500..2500 us). Starts that servo's PWM. */
-const char *Robot_SetServo(unsigned id, unsigned angle);
-/* Save session straight angle and command servo 2 there; requires all motion stopped. */
-const char *Robot_Calibrate(unsigned angle);
-const char *Robot_SetServoPulseUs(unsigned id, unsigned pulse_us);
-/* Stop one actuator. During a run, either of these ends the whole run. */
+/* CLI command functions return NULL on success or static error text. */
+
+/* Robot_StartAuto()
+ * -----------------
+ * Start one calibrated 90-135 degree cut, then return to physical SW4. An
+ * already active single-cut run is left running.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: Controller run state and actuator outputs.
+ * Errors: Rejects faults, paused runs or an active run2.
+ */
+const char* Robot_StartAuto(void);
+
+/* Robot_StartAuto2()
+ * ------------------
+ * Start two cuts (135 then 145 degrees), retracting to 95000 between cuts,
+ * then return to physical SW4. Angles are before calibration.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: Controller run state and actuator outputs.
+ * Errors: Rejects faults, pause, an active run, or straight calibration
+ * above 125.
+ */
+const char* Robot_StartAuto2(void);
+
+/* Robot_SetRun2Speeds()
+ * ---------------------
+ * Validate and copy the five run2 speeds atomically. Does not start movement
+ * or change the fixed homing speed.
+ *
+ * speeds: Five readable values: straight1, curve1, retract1, curve2,
+ *     return2; each is 16..2000 STEP pulses/s.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status.run2_speeds.
+ * Errors: Rejects invalid speeds or active stepper/run state.
+ */
+const char* Robot_SetRun2Speeds(const uint32_t speeds[5]);
+
+/* Robot_Pause()
+ * -------------
+ * Stop the stepper and drill but retain the active run phase and remaining
+ * pulses. Servo holds; repeated pause is harmless.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status.pause_remaining, status.paused, position
+ * and driver state.
+ * Errors: Rejects faults or absence of an active run.
+ */
+const char* Robot_Pause(void);
+
+/* Robot_Continue()
+ * ----------------
+ * Resume the paused phase, counted move and drill direction. Restart a
+ * pending switch debounce interval.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status, debounce_start, leg references and
+ * actuator outputs.
+ * Errors: Rejects faults or absence of a paused run.
+ */
+const char* Robot_Continue(void);
+
+/* Robot_ServoArcTest()
+ * --------------------
+ * Start the calibrated timed servo-2 sweep. Does not start or stop
+ * independently commanded motor motion.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status, arc_test_start and servo PWM/target.
+ * Errors: Rejects faults, active runs or servo driver failure.
+ */
+const char* Robot_ServoArcTest(void);
+
+/* Robot_StepperAuto()
+ * -------------------
+ * Start the stepper-only limit-to-limit test, replacing a manual counted
+ * move. Leave drill duty unchanged.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status, debouncing, overtravel and stepper
+ * state.
+ * Errors: Rejects faults or an active autonomous run.
+ */
+const char* Robot_StepperAuto(void);
+
+/* Robot_Move()
+ * ------------
+ * Start a counted manual move; target-limit detection can stop it early.
+ *
+ * steps: Signed pulse count, magnitude 1..1000000. Positive moves
+ *     toward SW4; negative moves toward SW1.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status target/mode/state and stepper driver.
+ * Errors: Rejects invalid count, faults, active run, busy stepper or pressed
+ * target.
+ */
+const char* Robot_Move(int32_t steps);
+
+/* Robot_SetSpeed()
+ * ----------------
+ * Set all three run speeds and the manual speed together; leave run2 and
+ * homing speeds unchanged.
+ *
+ * speed: 16..2000 STEP pulses/s.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status run profile/speed and stepper timer
+ * period.
+ * Errors: Rejects invalid speed or active stepper/run state.
+ */
+const char* Robot_SetSpeed(uint32_t speed);
+
+/* Robot_SetRunSpeeds()
+ * --------------------
+ * Validate and set the run profile atomically; select straight as the manual
+ * speed. Homing stays at 2000 steps/s.
+ *
+ * straight: Straight-section speed, 16..2000 STEP pulses/s.
+ * curve: Turning-section speed, 16..2000 STEP pulses/s.
+ * reverse: Return speed, 16..2000 STEP pulses/s.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status run profile/speed and stepper timer
+ * period.
+ * Errors: Rejects invalid speeds or active stepper/run state.
+ */
+const char* Robot_SetRunSpeeds(
+        uint32_t straight, uint32_t curve, uint32_t reverse);
+
+/* Robot_SetMotor()
+ * ----------------
+ * Set signed drill duty. Zero also cancels an active autonomous run.
+ *
+ * duty: -100..100 percent; sign selects bridge direction.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status duty/state and motor PWM; zero may stop
+ * the full run.
+ * Errors: Rejects invalid duty; nonzero duty also rejects faults or active
+ * runs.
+ */
+const char* Robot_SetMotor(int duty);
+
+/* Robot_SetServo()
+ * ----------------
+ * Set and enable an absolute servo angle without adding calibration. Cancel
+ * any servo arc test.
+ *
+ * id: Servo 1 or 2; the CLI exposes only servo 2.
+ * angle: Absolute nominal angle, 0..180 degrees.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status servo target, arc_test/state and servo
+ * PWM.
+ * Errors: Rejects invalid id/angle, faults, active runs or driver failure.
+ */
+const char* Robot_SetServo(unsigned id, unsigned angle);
+
+/* Robot_Calibrate()
+ * -----------------
+ * Save a session-only straight angle and command servo 2 there. Reset
+ * restores 90 degrees; no calibration is saved if the command fails.
+ *
+ * angle: Absolute straight angle, 0..135 degrees. Starting run2
+ *     additionally requires an angle no greater than 125.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status.straight_angle, servo target/state and
+ * servo PWM.
+ * Errors: Rejects invalid angle, faults, active motion or servo driver
+ * failure.
+ */
+const char* Robot_Calibrate(unsigned angle);
+
+/* Robot_SetServoPulseUs()
+ * -----------------------
+ * Set and enable an absolute servo pulse width without adding calibration.
+ * Cancel any servo arc test.
+ *
+ * id: Servo 1 or 2.
+ * pulse_us: Absolute pulse width, 500..2500 microseconds.
+ *
+ * Returns: NULL on success; static error text otherwise.
+ * Global variables modified: status servo target, arc_test/state and servo
+ * PWM.
+ * Errors: Rejects invalid id/pulse, faults, active runs or driver failure.
+ */
+const char* Robot_SetServoPulseUs(unsigned id, unsigned pulse_us);
+
+/* Robot_StopStepper()
+ * -------------------
+ * Stop the stepper; during a run, cancel the entire run. Outside a run leave
+ * the drill and servo unchanged.
+ *
+ * Returns: None.
+ * Global variables modified: status, stepper state, debounce/overtravel; run
+ * stop also clears duty.
+ * Errors: None.
+ */
 void Robot_StopStepper(void);
+
+/* Robot_StopMotor()
+ * -----------------
+ * Stop the drill; during a run, cancel the entire run. Outside a run retain
+ * manual stepper motion and servo targets.
+ *
+ * Returns: None.
+ * Global variables modified: status.duty and motor PWM; an active run
+ * invokes Robot_Stop().
+ * Errors: None.
+ */
 void Robot_StopMotor(void);
 #endif

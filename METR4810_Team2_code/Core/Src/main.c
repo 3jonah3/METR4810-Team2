@@ -111,6 +111,7 @@ int main(void)
   MX_TIM4_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  /* Bind drivers after CubeMX has configured clocks, GPIO and timers. */
   StatusLed_Init();
   Robot_Init(&htim1, &htim16, &htim4);
   Serial_Init(&huart1);
@@ -123,6 +124,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    /* Service motion/limits before parsing commands; keep every pass non-blocking. */
     Robot_Update();
     Serial_Update();
     StatusLed_Update();

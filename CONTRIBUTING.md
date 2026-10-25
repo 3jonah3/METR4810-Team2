@@ -19,7 +19,7 @@ These files are in `METR4810_Team2_code/Core/Src/`:
 | File | Purpose |
 |---|---|
 | `main.c` | Setup and main-loop calls. |
-| `robot_control.c` | Autonomous run, button control and stopping. |
+| `robot_control.c` | Run/run2, maintained switch control and stopping. |
 | `serial.c` | CLI commands and help text. |
 | `motor.c`, `servo.c`, `stepper.c`, `switch.c` | Hardware drivers. |
 
@@ -31,11 +31,11 @@ The **autonomous run is the code used for the demo**. The **UART CLI is generall
 
 Put the autonomous routine in `robot_control.c`:
 
-- `start_auto()` starts the run from either UART or the button.
+- `start_auto()` starts the run from UART or the maintained switch (which selects run2).
 - `Robot_Update()` runs the sequence. Put full-run actions under the `ROBOT_RUNNING` state.
 - `Robot_Stop()` stops and cancels the sequence.
 
-Avoid long delays or waiting loops so the stop command and button keep working.
+Avoid long delays or waiting loops so the stop command and switch keep working.
 
 ## 4. Test and share
 
@@ -49,3 +49,6 @@ git push -u origin your-branch-name
 ```
 
 Replace `<changed-files>` with the files you changed. Open a pull request into `main` and briefly say what changed and what you tested.
+
+For function contracts, formatting conventions and checks, see the
+[firmware maintenance guide](docs/firmware-maintenance.md).

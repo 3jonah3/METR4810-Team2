@@ -1,0 +1,270 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="software-architecture" name="Software architecture">
+    <mxGraphModel dx="1200" dy="1300" grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1169" pageHeight="1400">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="Software architecture and module responsibilities" style="rounded=0;fillColor=#ffffff;strokeColor=none;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="140" y="20" width="880" height="65" />
+        </mxCell>
+        <mxCell id="main" value="main.c&#10;HAL and peripheral setup&#10;Foreground service loop" style="rounded=1;arcSize=50;fillColor=#e2efda;strokeColor=#548235;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="410" y="110" width="350" height="100" />
+        </mxCell>
+        <mxCell id="serial" value="serial.c&#10;Commands, responses and telemetry&#10;Syntax and argument parsing" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="50" y="290" width="300" height="100" />
+        </mxCell>
+        <mxCell id="robot" value="robot_control.c&#10;Run state, paths, calibration&#10;Limits, speeds, pause and stop" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="410" y="290" width="350" height="100" />
+        </mxCell>
+        <mxCell id="led" value="status_led.c&#10;RX and TX activity indication" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="830" y="290" width="280" height="100" />
+        </mxCell>
+        <mxCell id="e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="main" target="serial">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="main" target="robot">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="main" target="led">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e10" value="Robot API" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="serial" target="robot">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="step" value="stepper.c&#10;TIM16 pulse generation&#10;Counted and continuous moves" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="50" y="530" width="300" height="100" />
+        </mxCell>
+        <mxCell id="servo" value="servo.c&#10;TIM4 servo pulse targets&#10;PWM enable and hold" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="410" y="530" width="300" height="100" />
+        </mxCell>
+        <mxCell id="motor" value="motor.c&#10;TIM1 signed drill duty" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="770" y="530" width="300" height="100" />
+        </mxCell>
+        <mxCell id="e14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;exitX=0.2;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="robot" target="step">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="480" y="460" />
+              <mxPoint x="200" y="460" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e15" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="robot" target="servo">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="585" y="470" />
+              <mxPoint x="560" y="470" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e16" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;exitX=0.8;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="robot" target="motor">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="690" y="460" />
+              <mxPoint x="920" y="460" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="switch" value="switch.c&#10;Raw SW1–SW4 GPIO inputs" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="420" y="760" width="300" height="90" />
+        </mxCell>
+        <mxCell id="e18" value="Polled inputs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;dashed=1;exitX=1;exitY=0.5;entryX=1;entryY=0.8;" edge="1" parent="1" source="switch" target="robot">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="735" y="805" />
+              <mxPoint x="735" y="660" />
+              <mxPoint x="1125" y="660" />
+              <mxPoint x="1125" y="415" />
+              <mxPoint x="800" y="415" />
+              <mxPoint x="800" y="370" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="irq" value="Interrupts&#10;TIM16 accounts for pulses&#10;UART publishes RX and TX events" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="50" y="970" width="350" height="120" />
+        </mxCell>
+        <mxCell id="e20" value="Pulse accounting" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;dashed=1;" edge="1" parent="1" source="irq" target="step">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e21" value="Queued events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;dashed=1;" edge="1" parent="1" source="irq" target="serial">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="25" y="1030" />
+              <mxPoint x="25" y="340" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend" value="Solid arrows: calls or commanded outputs&#10;Dashed arrows: events or input data&#10;&#10;Application policy stays in robot_control.c.&#10;Drivers operate hardware; they do not choose run phases." style="rounded=0;fillColor=#ffffff;strokeColor=none;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="470" y="950" width="600" height="170" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="foreground-execution" name="Foreground execution">
+    <mxGraphModel dx="1200" dy="1300" grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1169" pageHeight="1400">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="Foreground execution and interrupt work" style="rounded=0;fillColor=#ffffff;strokeColor=none;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="140" y="20" width="880" height="65" />
+        </mxCell>
+        <mxCell id="start" value="Reset and initialise HAL, GPIO, timers and UART" style="rounded=1;arcSize=50;fillColor=#e2efda;strokeColor=#548235;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="380" y="110" width="390" height="70" />
+        </mxCell>
+        <mxCell id="init" value="StatusLed_Init → Robot_Init → Serial_Init&#10;DC off, STEP stopped, servo PWM disabled" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="380" y="230" width="390" height="90" />
+        </mxCell>
+        <mxCell id="robot" value="Robot_Update&#10;Read switches and faults&#10;Advance motion and steering" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="380" y="370" width="390" height="110" />
+        </mxCell>
+        <mxCell id="serial" value="Serial_Update&#10;Process bounded RX data and commands&#10;Queue responses and run telemetry" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="380" y="540" width="390" height="110" />
+        </mxCell>
+        <mxCell id="led" value="StatusLed_Update&#10;Expire activity indications" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="380" y="710" width="390" height="80" />
+        </mxCell>
+        <mxCell id="e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="start" target="init">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="init" target="robot">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="robot" target="serial">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="serial" target="led">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e12" value="Repeat" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="led" target="robot">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="300" y="750" />
+              <mxPoint x="300" y="425" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="uart" value="UART interrupts&#10;Buffer incoming bytes&#10;Release completed TX chunks" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="830" y="520" width="280" height="130" />
+        </mxCell>
+        <mxCell id="e14" value="Events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;dashed=1;" edge="1" parent="1" source="uart" target="serial">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="timer" value="TIM16 interrupt&#10;Account for STEP pulses&#10;Rearm counted motion" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="830" y="340" width="280" height="130" />
+        </mxCell>
+        <mxCell id="e16" value="Pulse counts" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;dashed=1;" edge="1" parent="1" source="timer" target="robot">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="safety" value="Controller rules&#10;Fault: stop and latch&#10;Run switch ON-to-OFF: stop&#10;Pause: hold outputs and retain phase&#10;Continue: resume retained phase" style="rounded=0;fillColor=#ffffff;strokeColor=none;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="370" y="920" width="420" height="190" />
+        </mxCell>
+        <mxCell id="note" value="Commands execute in the foreground, not UART interrupts.&#10;Motion phases do not block for an entire cut.&#10;Driver direction setup still includes a short 1 ms delay." style="rounded=0;fillColor=#ffffff;strokeColor=none;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="260" y="1170" width="640" height="110" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="autonomous-sequences" name="Autonomous sequences">
+    <mxGraphModel dx="1200" dy="1300" grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1169" pageHeight="1400">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="Autonomous sequences at default zero overtravel" style="rounded=0;fillColor=#ffffff;strokeColor=none;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="140" y="15" width="880" height="60" />
+        </mxCell>
+        <mxCell id="start" value="Accepted run or run2 start&#10;PC11 ON requests run2" style="rounded=1;arcSize=50;fillColor=#e2efda;strokeColor=#548235;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="420" y="90" width="320" height="70" />
+        </mxCell>
+        <mxCell id="pressed" value="SW4 already&#10;pressed?" style="rhombus;fillColor=#fff2cc;strokeColor=#b58a24;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="450" y="190" width="260" height="100" />
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="start" target="pressed">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="back" value="Back off 1500 steps at 2000 steps/s&#10;SW4 must release or fault" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="45" y="205" width="320" height="90" />
+        </mxCell>
+        <mxCell id="e7" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="pressed" target="back">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="home" value="Home to SW4 at 2000 steps/s&#10;DC off; calibrated straight&#10;Confirm switch and set reference" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="410" y="340" width="340" height="100" />
+        </mxCell>
+        <mxCell id="e9" value="No" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="pressed" target="home">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e10" value="Released" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="back" target="home">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="205" y="390" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="cut1" value="Outward cut 1&#10;Straight to 100000 at 750 steps/s&#10;Curve to 157297 at 500 steps/s&#10;Nominal endpoint 135°; DC -100%" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="380" y="490" width="400" height="125" />
+        </mxCell>
+        <mxCell id="e12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="home" target="cut1">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="which" value="run2?" style="rhombus;fillColor=#fff2cc;strokeColor=#b58a24;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="465" y="660" width="230" height="90" />
+        </mxCell>
+        <mxCell id="e14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cut1" target="which">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="return1" value="run return&#10;Retrace cut 1 at 2000 steps/s&#10;Continue to physical SW4&#10;DC +100%" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="50" y="815" width="320" height="120" />
+        </mxCell>
+        <mxCell id="e16" value="No" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="which" target="return1">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="210" y="705" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="retract" value="run2 first retract&#10;Straight at 100000, then back to 95000&#10;2000 steps/s; DC +100%" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="760" y="805" width="350" height="105" />
+        </mxCell>
+        <mxCell id="e18" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="which" target="retract">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="935" y="705" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="cut2" value="Cut 2 turns immediately from 95000&#10;To 157297 at 800 steps/s&#10;Nominal endpoint 145°; DC -100%" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="760" y="955" width="350" height="105" />
+        </mxCell>
+        <mxCell id="e20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="retract" target="cut2">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="return2" value="Final return at 2000 steps/s&#10;Retrace cut 2 to straight at 95000&#10;Continue to physical SW4; DC +100%" style="rounded=1;fillColor=#e8f0f7;strokeColor=#486581;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="760" y="1105" width="350" height="105" />
+        </mxCell>
+        <mxCell id="e22" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cut2" target="return2">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="finish" value="Confirm physical SW4&#10;Stop DC and STEP; hold calibrated straight&#10;Cycle complete" style="rounded=1;arcSize=50;fillColor=#e2efda;strokeColor=#548235;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="370" y="1260" width="420" height="95" />
+        </mxCell>
+        <mxCell id="e24" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="return1" target="finish">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="210" y="1307" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e25" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#40566a;fontFamily=Arial;fontSize=14;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="return2" target="finish">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="935" y="1307" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rules" value="Applies throughout&#10;Pause retains phase; continue resumes.&#10;Stop or switch OFF cancels motion.&#10;Faults stop and latch.&#10;Unexpected target limits on counted run2&#10;legs fault; run has an SW1 fallback.&#10;&#10;Angles shown are nominal.&#10;Calibration adds straight minus 90°." style="rounded=0;fillColor=#ffffff;strokeColor=none;whiteSpace=wrap;html=0;fontFamily=Arial;fontSize=16;spacing=10;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="390" y="825" width="340" height="340" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
