@@ -33,3 +33,25 @@ This path is intended to improve foam clearance; the software checks cannot veri
 The autonomous return continues to physical SW4, then completes after switch debounce and holds calibrated straight (90 degrees without calibration). The old 5000-step return offset is removed. Initial homing still uses SW4; outward reversal remains at 157,297 steps.
 
 Calibration: this table lists TRUE/PATH angles. `calibrate(A)` adds A - 90 degrees to every angle for the ADJUSTED servo command. The accepted whole-degree range is 0-135. Defaults return on power-up/reset; positions and speeds do not change.
+
+## run2 second cut
+
+After cut 1 reaches 135 degrees at 157,297 steps, it retraces the original curve to straight at 100,000, then retracts another 5,000 to **95,000 steps**. Cut 2 starts turning from that position and smoothly reaches **145 degrees at 157,297 steps**. Its final return retraces the second curve, reaches straight at 95,000, and continues to physical SW4.
+
+Cut 2 stretches the original curve horizontally from the original 100,000-157,297 interval to 95,000-157,297. It expands the rounded pulse offset about straight by 611/500, rounding to microseconds. Holds and eased endpoints are retained. Positions below are rounded up to the first step reaching each mapped anchor; angles are approximate uncalibrated commands.
+
+| Cut 2 position from SW4 (steps) | Servo angle (degrees) | Pulse (us) |
+|---:|---:|---:|
+| 0-95,000 | 90.00 | 1500 |
+| 97,719 | 96.12 | 1568 |
+| 100,437 | 102.24 | 1636 |
+| 111,309 | 102.24 | 1636 |
+| 122,182 | 114.39 | 1771 |
+| 133,055 | 121.77 | 1853 |
+| 154,800 | 136.44 | 2016 |
+| 155,887 | 140.40 | 2060 |
+| 156,431 | 142.92 | 2088 |
+| 156,975 | 144.63 | 2107 |
+| 157,297 | 144.99 | 2111 |
+
+Calibration for run2 must be 0-125 degrees; its adjusted second endpoint is straight + 55 degrees. The first cut remains unchanged. `speed2(straight1,curve1,retract1,curve2,return2)` defaults to `speed2(750,500,2000,800,2000)`. Cut 2 uses curve2 from its start. Homing/backoff always use 2000 steps/s. With homing overtravel enabled, DATA positions add `LIMIT_OVERTRAVEL_STEPS`.

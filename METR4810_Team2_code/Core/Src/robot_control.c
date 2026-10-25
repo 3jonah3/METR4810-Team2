@@ -15,7 +15,8 @@ static uint32_t arc_test_start;
 static uint32_t debounce_start;
 static uint8_t run_switch_raw, run_switch_stable;
 static uint32_t run_switch_changed;
-static void start_auto(void);
+static void start_auto(uint8_t run2);
+static void finish_retract1(void);
 static void arc_test_update(void);
 static void finish_run(void);
 static void turn_at_outward_end(void);
@@ -92,7 +93,24 @@ static void demo_update_position(void)
         status.return_steps = delta;
         status.demo_position = delta > demo_leg_start_position ? 0U : demo_leg_start_position - delta;
     }
-    demo_servo(demo_pulse(path_step(status.demo_position)));
+    uint32_t step = path_step(status.demo_position);
+    /* Stretch cut 2's curve to begin at the intermediate retract endpoint.
+       Clamp before mapping so its final return holds straight below that point. */
+    if (status.run2 && status.run2_phase >= RUN2_CUT2) {
+        if (step <= RUN2_CURVE_START_STEPS) step = demo_schedule[0].step;
+        else if (step >= RUN_OUTWARD_END_STEPS) step = RUN_OUTWARD_END_STEPS;
+        else step = demo_schedule[0].step + (uint32_t)((uint64_t)(step - RUN2_CURVE_START_STEPS) *
+            (RUN_OUTWARD_END_STEPS - demo_schedule[0].step) /
+            (RUN_OUTWARD_END_STEPS - RUN2_CURVE_START_STEPS));
+    }
+    unsigned pulse = demo_pulse(step);
+    /* Scale the same smooth curve about straight for cut 2 and its return. */
+    if (status.run2 && status.run2_phase >= RUN2_CUT2) {
+        unsigned span = DEMO_END_PULSE_US - DEMO_START_PULSE_US;
+        pulse = DEMO_START_PULSE_US + ((pulse - DEMO_START_PULSE_US) *
+            (SERVO_ANGLE_US(RUN2_END_ANGLE) - DEMO_START_PULSE_US) + span / 2U) / span;
+    }
+    demo_servo(pulse);
 }
 
 /* PC11 maintained run switch: report either debounced edge once. */
@@ -118,9 +136,17 @@ static uint8_t target_direction(void)
     return status.target == 4U ? DIR_TO_SWITCH4 : (DIR_TO_SWITCH4 ^ 1U);
 }
 
+/* Homing (including back-off/overtravel) is fixed; cutting profiles cannot change it. */
 static uint32_t run_speed(void)
 {
-    if (status.demo_homing) return status.straight_speed;
+    if (status.demo_homing) return RUN_HOMING_SPEED;
+    if (status.run2) {
+        if (status.run2_phase == RUN2_RETRACT1) return status.run2_speeds[2];
+        if (status.run2_phase == RUN2_RETURN2) return status.run2_speeds[4];
+        /* Cut 2 turns immediately at its start, so it has no straight-speed slot. */
+        if (status.run2_phase == RUN2_CUT2) return status.run2_speeds[3];
+        return status.run2_speeds[path_step(status.demo_position) >= demo_schedule[0].step ? 1U : 0U];
+    }
     if (status.target == 4U) return status.return_speed;
     return path_step(status.demo_position) >= demo_schedule[0].step ?
         status.curve_speed : status.straight_speed;
@@ -135,6 +161,10 @@ static void start_target(void)
     if (status.state == ROBOT_RUNNING && !status.demo_homing && status.target == 1U) {
         if (status.demo_position >= RUN_OUTWARD_STOP_POSITION) turn_at_outward_end();
         else Stepper1_Move(target_direction(), RUN_OUTWARD_STOP_POSITION - status.demo_position);
+    } else if (status.state == ROBOT_RUNNING && !status.demo_homing && status.run2 &&
+               status.run2_phase == RUN2_RETRACT1) {
+        if (status.demo_position <= RUN2_RETRACT_POSITION) finish_retract1();
+        else Stepper1_Move(target_direction(), status.demo_position - RUN2_RETRACT_POSITION);
     } else Stepper1_Start(target_direction());
 }
 
@@ -179,8 +209,28 @@ static void turn_around(void)
 
 static void turn_at_outward_end(void)
 {
+    if (status.run2)
+        status.run2_phase = status.run2_phase == RUN2_CUT1 ? RUN2_RETRACT1 : RUN2_RETURN2;
     turn_around();
     status.turn_at_position = 1;
+}
+
+/* Intermediate retract is counted, never homed: preserve the absolute position. */
+static void finish_retract1(void)
+{
+    status.turn_at_position = 1U;
+    status.turn_switch = 4U;
+    status.turn_position = status.demo_position;
+    status.turn_pulse_us = (unsigned)status.servo_pulse_us[1];
+    ++status.turn_number;
+    status.run2_phase = RUN2_CUT2;
+    status.target = 1U;
+    status.return_steps = 0U;
+    demo_leg_start_position = status.demo_position;
+    demo_leg_start_pulses = Stepper1_TotalPulses();
+    status.duty = DEMO_OUTWARD_DC_DUTY;
+    Motor1_SetDuty(status.duty);
+    start_target();
 }
 
 /* Physical SW4 confirmed: stop at first touch, without return overtravel. */
@@ -203,6 +253,12 @@ static void limit_reached(void)
 static void limit_confirmed(void)
 {
     uint32_t steps = LIMIT_OVERTRAVEL_STEPS;
+    if (status.state == ROBOT_RUNNING && status.run2 && !status.demo_homing &&
+        status.run2_phase != RUN2_RETURN2) {
+        status.fault = ROBOT_FAULT_RUN2_LIMIT;
+        Robot_Stop();
+        return;
+    }
     if (status.state == ROBOT_RUNNING && status.target == 4U && !status.demo_homing) {
         int64_t error = (int64_t)status.outward_steps - status.return_steps - RUN_HOME_POSITION;
         status.home_step_error = error > INT32_MAX ? INT32_MAX :
@@ -225,9 +281,14 @@ void Robot_Init(TIM_HandleTypeDef *motor, TIM_HandleTypeDef *stepper, TIM_Handle
 {
     status.state = ROBOT_IDLE;
     status.step_mode = ROBOT_STEP_STOPPED;
-    status.straight_speed = 1000U;
+    status.straight_speed = 750U;
     status.curve_speed = 500U;
-    status.return_speed = 1500U;
+    status.return_speed = 2000U;
+    /* straight1, curve1, retract1, curve2, return2 (STEP pulses/s). */
+    const uint32_t defaults[] = {750U, 500U, 2000U, 800U, 2000U};
+    for (unsigned i = 0; i < 5; ++i) status.run2_speeds[i] = defaults[i];
+    status.run2 = 0;
+    status.run2_phase = RUN2_CUT1;
     status.speed = status.straight_speed;
     status.target = 4U;
     status.duty = status.fault = 0;
@@ -280,7 +341,12 @@ void Robot_Update(void)
     }
     if (switch_changed) {
         if (!run_switch_stable) Robot_Stop();
-        else if (status.state != ROBOT_RUNNING) start_auto();
+        else if (status.state != ROBOT_RUNNING) {
+            /* The switch uses the same calibrated range restriction as CLI run2.
+               An invalid range must never start movement; status explains the block. */
+            if (status.straight_angle <= SERVO_MAX_ANGLE - (RUN2_END_ANGLE - DEMO_START_ANGLE))
+                start_auto(1);
+        }
     }
     if (status.state == ROBOT_RUNNING) demo_update_position();
     if (status.state == ROBOT_RUNNING && status.paused) return; /* Frozen until continue or stop. */
@@ -325,6 +391,9 @@ void Robot_Update(void)
     }
     if (status.state == ROBOT_RUNNING && !status.demo_homing && status.target == 1U &&
         !debouncing && !overtravel && !Stepper1_IsBusy()) turn_at_outward_end();
+    if (status.state == ROBOT_RUNNING && !status.demo_homing && status.run2 &&
+        status.run2_phase == RUN2_RETRACT1 && !debouncing && !overtravel &&
+        !Stepper1_IsBusy()) finish_retract1();
     update_run_speed();
 }
 
@@ -370,10 +439,12 @@ static void begin_auto(void)
 }
 
 /* Start a run: DC off, servo at the arc start, then home to SW4 (backing off it first if pressed). */
-static void start_auto(void)
+static void start_auto(uint8_t run2)
 {
     Stepper1_Stop();
-    status.speed = status.straight_speed;
+    status.run2 = run2;
+    status.run2_phase = RUN2_CUT1;
+    status.speed = RUN_HOMING_SPEED;
     Stepper1_SetSpeed(status.speed);
     Motor1_SetDuty(0);
     /* Re-home on every run; never treat an arbitrary starting point as zero.
@@ -409,7 +480,20 @@ const char *Robot_StartAuto(void)
     const char *error = motion_allowed(0);
     if (error) return error;
     if (status.paused) return "RUN PAUSED: send continue or stop";
-    if (status.state != ROBOT_RUNNING) start_auto();
+    if (status.state == ROBOT_RUNNING && status.run2) return "RUN2 ACTIVE: send stop first";
+    if (status.state != ROBOT_RUNNING) start_auto(0);
+    return NULL;
+}
+
+const char *Robot_StartAuto2(void)
+{
+    const char *error = motion_allowed(0);
+    if (error) return error;
+    if (status.paused) return "RUN PAUSED: send continue or stop";
+    if (status.state == ROBOT_RUNNING && !status.run2) return "RUN ACTIVE: send stop first";
+    if (status.straight_angle > SERVO_MAX_ANGLE - (RUN2_END_ANGLE - DEMO_START_ANGLE))
+        return "RUN2 REQUIRES CALIBRATION 0..125 (55-DEGREE SWEEP MUST FIT 0..180)";
+    if (status.state != ROBOT_RUNNING) start_auto(1);
     return NULL;
 }
 
@@ -497,6 +581,16 @@ const char *Robot_SetRunSpeeds(uint32_t straight, uint32_t curve, uint32_t rever
     status.return_speed = reverse;
     status.speed = straight;
     Stepper1_SetSpeed(straight);
+    return NULL;
+}
+
+const char *Robot_SetRun2Speeds(const uint32_t speeds[5])
+{
+    for (unsigned i = 0; i < 5; ++i)
+        if (speeds[i] < 16U || speeds[i] > 2000U) return "INVALID SPEED: USE 16..2000 STEPS/S";
+    if (status.state == ROBOT_RUNNING || status.step_mode != ROBOT_STEP_STOPPED)
+        return "STOP STEPPER BEFORE CHANGING SPEED";
+    for (unsigned i = 0; i < 5; ++i) status.run2_speeds[i] = speeds[i];
     return NULL;
 }
 

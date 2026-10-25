@@ -6,7 +6,7 @@
 
 After flashing and powering the PCB, choose either option:
 
-- **Run switch:** switch **PC11 / SW2** ON to start one autonomous cycle; switch OFF to stop. No UART or computer connection is needed.
+- **Run switch:** switch **PC11 / SW2** ON to start one two-cut `run2` cycle; switch OFF to stop. No UART or computer connection is needed.
 - **UART CLI:** connect through PuTTY to use `run`, `stop`, or control the motor, servo and stepper individually.
 
 Both controls work together: an ON-to-OFF transition can stop a CLI-started run, and `stop` can stop a switch-started run. For switch-only use, complete steps 1â€“3 and skip the UART/PuTTY setup.
@@ -115,7 +115,7 @@ Type one command at a time and press **Enter**.
 | `ping` | Check the serial connection. |
 | `status` | Show robot state and actuator status. |
 | `limits` | Show switch states: 1 = pressed. |
-| `speed(1000,500,1000)` | Set straight, turning, and return stepper speeds in steps/s. Each must be 16–2000; configure while stopped. |
+| `speed(750,500,2000)` | Set straight, turning, and return stepper speeds in steps/s. Each must be 16–2000; configure while stopped. |
 | `run` | One cycle: home to SW4, drive out to 157,297 steps, return to physical SW4 and stop. The servo follows the schedule and the DC direction follows travel. |
 | `pause` | Freeze a run where it is: the stepper and DC motor stop and the servo holds its angle. The run is kept; `run` and manual moves are refused until `continue` or `stop`. |
 | `continue` | Resume a paused run from exactly where it stopped, on the same leg with the same drill duty. |
@@ -204,7 +204,7 @@ To save a run, turn on PuTTY logging before starting it: **Session â†’ Logging â
 
 <img src="docs/images/Limit_switches_rotated.png" alt="Front and back limit switch connections on SW1 and SW4" width="400">
 
-Switch **PC11 / SW2** ON (contact closed to ground) to start one cycle, and OFF (contact open) to stop the stepper and DC motor while the servo holds its angle. Both transitions use a 30 ms debounce. After completion or `stop`, switch OFF then ON to start another cycle. Leaving the switch ON never repeats the run; ON at reset requires OFF then ON first.
+Switch **PC11 / SW2** ON (contact closed to ground) to start one `run2` cycle, and OFF (contact open) to stop the stepper and DC motor while the servo holds its angle. Both transitions use a 30 ms debounce. After completion or `stop`, switch OFF then ON to start another cycle. Leaving the switch ON never repeats the run; ON at reset requires OFF then ON first.
 
 This works without UART connected. The `run` and `stop` commands still work too. The switch is not a UART interlock: CLI commands still work while it is OFF.
 
@@ -263,26 +263,26 @@ Robot_SetServoPulseUs(2, 1556);    // Microseconds; enables servo 2
 ```
 
 Both functions return NULL on success or an error string. The low-level driver also provides `servo(2, 95)` and `Servo_SetPulseUs(2, 1556)`; these return HAL status and require `Servo_Start(2)` to enable output after initialization. In C, `1556u` is an unsigned integer, not a unit: use the separate pulse-width function. `SERVO_ANGLE_US(angle)` in `servo.h` converts an angle to its pulse width. Angles are nominal; confirm the mechanism can accommodate the commanded travel.
-### Demo sequence (`run` or PC11/SW2)
+### Single-cut sequence (`run`; PC11/SW2 starts `run2`)
 
 1. Home to **SW4 / PC15** with the DC motor off and servo 2 at **1500 us (90 degrees)**, the start of its arc. Zero is set where SW4 is first touched, after a 30 ms debounce.
    - If SW4 is **already pressed** when the run starts (for example when manually placed on the home switch), the carriage first **backs off 1500 steps** toward SW1. SW4 must then read released; if it is still pressed 30 ms later, a limit fault latches instead of moving further. Otherwise the carriage homes back to first touch as normal.
 2. Set position to zero and push outward toward **SW1**, with DC duty **-100%**.
 3. At **157,297 steps**, reverse the stepper and DC motor (**+100%**) and follow the servo schedule backwards on the return toward SW4. The counted outward endpoint controls normal reversal; SW1 remains a backup. Return travel continues until physical SW4 activates, even if the counted position reaches zero first.
-4. When **physical SW4 activates**, the stepper stops immediately on detection. After 30 ms debounce confirms the switch, the DC motor stops and the run completes, holding the calibrated straight servo angle. A brief switch bounce resumes the return. There is no 5000-step return offset and no return overtravel. Send `run` or switch OFF then ON for another cycle; the next run backs off SW4 and homes again.
+4. When **physical SW4 activates**, the stepper stops immediately on detection. After 30 ms debounce confirms the switch, the DC motor stops and the run completes, holding the calibrated straight servo angle. A brief switch bounce resumes the return. There is no 5000-step return offset and no return overtravel. Send `run` for another single-cut cycle (switch OFF then ON starts `run2`); the next run backs off SW4 and homes again.
 
 `stop` or switching the run switch OFF during a run stops the stepper and DC motor where they are and ends the run; the servo holds its angle. `pause` freezes the run the same way but keeps it, and `continue` resumes it. A pause during a switch debounce re-checks the switch for a fresh 30 ms on `continue`. A pause during the back-off or an overtravel finishes the remaining steps.
 
 Set the three run speeds with one command while stopped:
 
 ```text
-speed(1000,500,1000)
+speed(750,500,2000)
 run
 ```
 
-The arguments are **straight, turning, return**, in STEP pulses per second (each 16-2000). Homing and back-off use the straight speed. Outward travel switches to turning speed at 100,000 steps from SW4 first touch and keeps it to the outward reversal, including the 100-degree plateau. The entire return uses the third speed and stops on physical SW4. Limit overtravel shifts the reported transition position by the configured overtravel amount. Speed changes briefly stop and restart the pulse timer, preserving counted position; this is a discrete speed change, not an acceleration ramp.
+The arguments are **straight, turning, return**, in STEP pulses per second (each 16-2000). Homing and back-off always use 2000 steps/s for both programs, independently of speed settings. Outward travel switches to turning speed at 100,000 steps from SW4 first touch and keeps it to the outward reversal, including the 100-degree plateau. The entire return uses the third speed and stops on physical SW4. Limit overtravel shifts the reported transition position by the configured overtravel amount. Speed changes briefly stop and restart the pulse timer, preserving counted position; this is a discrete speed change, not an acceleration ramp.
 
-`status` shows the active speed under `STEPPER` and all three settings under `RUN SPEEDS`. Changes are rejected during running, paused runs, or manual stepper movement. `stepper(speed,n)` remains available and sets all three speeds to n, as well as the manual move speed. Manual moves otherwise use the current selected speed. Defaults are 1000/500/1500 (straight/turning/return); settings persist between runs but reset on power-up/reset.
+`status` shows the active speed under `STEPPER` and all three settings under `RUN SPEEDS`. Changes are rejected during running, paused runs, or manual stepper movement. `stepper(speed,n)` remains available and sets all three speeds to n, as well as the manual move speed. Manual moves otherwise use the current selected speed. Defaults are 750/500/2000 (straight/turning/return); settings persist between runs but reset on power-up/reset.
 
 ### Session straightness calibration
 
@@ -353,3 +353,27 @@ At completion, `HOME ERROR` is outward pulses minus return pulses minus configur
 These are counted command pulses, not encoder measurements. Missed steps can change the physical stopping position.
 
 For a return mismatch, capture the outward TURN line and `status` shortly afterward while retracting. Compare the reported servo target to the observed mechanism before changing angle calibration or compensating for backlash.
+
+### Two-cut sequence: run2
+
+`run2` homes to SW4, then executes:
+
+1. Cut 1: straight to 100,000 steps, then the existing smooth 90-135 degree path to **157,297 steps**.
+2. Retract along cut 1 to **95,000 steps** (5,000 steps inside the straight section). No SW4 visit between cuts.
+3. Cut 2: start turning immediately at 95,000, following a smooth 90-145 degree path to **157,297 steps**.
+4. Return along cut 2 to **physical SW4**, then stop at calibrated straight.
+
+Both outward cuts turn before SW1. Positions above are measured from SW4 first touch; DATA adds `LIMIT_OVERTRAVEL_STEPS` if enabled. During counted run2 legs, an unexpected confirmed target limit stops the run and latches a fault; reset after correcting the cause. Final return and initial homing use physical SW4 as before.
+
+```text
+speed2(750,500,2000,800,2000)
+run2
+```
+
+The five arguments are **straight1, curve1, retract1, curve2, return2**, in steps/second (16-2000). Those are also the defaults. Homing/backoff always run at 2000 steps/s, independent of speed profiles. Cut 2 uses curve2 immediately; there is no straight2 argument. Set speeds while stopped; `speed2` is independent of `speed` and `stepper(speed,n)`. All speeds reset on power-up.
+
+`pause`, `continue`, `stop`, `motor(stop)`, `stepper(stop)`, telemetry and run-switch OFF work with both programs. The maintained run-switch ON edge starts `run2`. With calibration above 125, switch-start is blocked just like CLI `run2`; `status` reports the invalid range. A running program cannot be replaced by the other without stopping first. Status and DATA identify CUT1, RETRACT1, CUT2 and RETURN2.
+
+`calibrate(A)` shifts both cuts by A-90 degrees. For example, `calibrate(110)` gives straight 110, first endpoint 155 and second endpoint 165. `run2` requires A in **0-125** so the larger sweep fits 0-180; the original `run` still supports calibration 0-135. Calibration remains optional and resets on power-up. `straight()` uses the saved straight angle while stopped. Status and command feedback show true/path and adjusted/command angles, plus both adjusted run ranges.
+
+See [the two-cut path table](docs/foam-clearance-path.md#run2-second-cut) for cut 2 targets. Firmware builds and host simulations do not verify foam clearance or lost mechanical steps.

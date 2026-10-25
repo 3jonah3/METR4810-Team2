@@ -15,6 +15,12 @@
 /* Measured SW1 hit: 162297; reverse 5000 steps earlier. */
 #define RUN_OUTWARD_END_STEPS 157297U
 #define RUN_OUTWARD_STOP_POSITION (RUN_OUTWARD_END_STEPS + LIMIT_OVERTRAVEL_STEPS)
+#define RUN_HOMING_SPEED 2000U /* Fixed for both programs, including start back-off. */
+#define RUN2_CURVE_START_STEPS 95000U
+#define RUN2_RETRACT_POSITION (RUN2_CURVE_START_STEPS + LIMIT_OVERTRAVEL_STEPS)
+#define RUN2_END_ANGLE 145
+#define ROBOT_FAULT_RUN2_LIMIT 3U /* Unexpected physical limit during a counted run2 leg. */
+typedef enum { RUN2_CUT1, RUN2_RETRACT1, RUN2_CUT2, RUN2_RETURN2 } RobotRun2Phase;
 #define RUN_HOME_POSITION LIMIT_OVERTRAVEL_STEPS /* Expected SW4 first-touch position. */
 #define RUN_START_BACKOFF_STEPS (1500U + LIMIT_OVERTRAVEL_STEPS)
 /* status.fault values; any non-zero fault stops everything until reset. */
@@ -39,6 +45,9 @@ typedef struct {
     RobotState state;
     RobotStepMode step_mode;
     uint32_t straight_speed, curve_speed, return_speed; /* Run profile, STEP pulses/s. */
+    uint32_t run2_speeds[5]; /* straight1, curve1, retract1, curve2, return2. */
+    uint8_t run2;
+    RobotRun2Phase run2_phase;
     uint32_t speed; /* Stepper speed in STEP pulses per second. */
     uint8_t target, fault; /* target: switch being driven toward (1 or 4); fault: ROBOT_FAULT_* or 0. */
     int duty; /* DC drill duty, -100..100 percent. */
@@ -73,6 +82,10 @@ const RobotStatus *Robot_GetStatus(void);
 
 /* One demo cycle: home to SW4, drive out to the counted outward endpoint, return to physical SW4 and stop. */
 const char *Robot_StartAuto(void);
+/* Two cuts (135 then 145 degrees), intermediate retract to 95000, final return to SW4. */
+const char *Robot_StartAuto2(void);
+/* Atomically set five run2 section speeds (16..2000), while stopped; homing stays fixed. */
+const char *Robot_SetRun2Speeds(const uint32_t speeds[5]);
 /* Freeze a run in place without ending it. */
 const char *Robot_Pause(void);
 /* Resume a paused run on the same leg, from where it stopped. */
@@ -85,7 +98,7 @@ const char *Robot_StepperAuto(void);
 const char *Robot_Move(int32_t steps);
 /* 16..2000 pulses per second. The stepper must be stopped. */
 const char *Robot_SetSpeed(uint32_t speed);
-/* Configure all three run sections atomically while stopped. Homing uses straight speed. */
+/* Configure all three run sections atomically while stopped. Homing/back-off always use RUN_HOMING_SPEED. */
 const char *Robot_SetRunSpeeds(uint32_t straight, uint32_t curve, uint32_t reverse);
 /* Signed duty, -100..100 percent. 0 stops the motor. */
 const char *Robot_SetMotor(int duty);

@@ -31,6 +31,7 @@ static uint32_t telemetry_ms, telemetry_last;
 static const char *last_leg;
 static const char data_header[] = "DATA,ms,leg,steps,mm,servo_us,pod_deg,dc,sw1,sw4\r\n";
 static void help(void);
+static const char *leg(const RobotStatus *s);
 
 /* Main-loop producer, interrupt consumer. Never wait for transmission. */
 static void reply(const char *format, ...)
@@ -144,6 +145,9 @@ static void calibration_status(void)
     reply("CALIBRATION: STRAIGHT=%u DEG; OFFSET=%+d DEG; RUN RANGE=%u..%u DEG (RESETS ON POWER-UP)\r\n",
           s->straight_angle, offset, s->straight_angle,
           s->straight_angle + DEMO_END_ANGLE - DEMO_START_ANGLE);
+    reply("RUN2 ADJUSTED RANGE=%u..%u DEG; %s\r\n", s->straight_angle,
+          s->straight_angle + RUN2_END_ANGLE - DEMO_START_ANGLE,
+          s->straight_angle <= 125U ? "CALIBRATION VALID" : "BLOCKED: CALIBRATE 0..125 FOR RUN2");
     if (s->servo_pulse_us[1] < 0) reply("SERVO 2: UNCOMMANDED\r\n");
     else reply("SERVO 2: TRUE (PATH)=%d DEG; ADJUSTED (COMMAND)=%d DEG; %d US (NOT MEASURED)\r\n",
                s->servo_angle[1] - offset, s->servo_angle[1], s->servo_pulse_us[1]);
@@ -155,6 +159,7 @@ static void status(void)
     const char *states[] = {"IDLE", "RUNNING", "STOPPED"};
     reply("STATE: %s\r\nDC MOTOR: %d%%\r\nFAULT: %s\r\nPC11 RUN SWITCH: %s\r\nTX RESPONSES DROPPED: %u\r\n",
           s->paused ? "RUNNING (PAUSED)" : states[s->state], s->duty, s->fault == ROBOT_FAULT_SW4_STUCK ? "LIMIT FAULT LATCHED (SW4 STUCK)" :
+          s->fault == ROBOT_FAULT_RUN2_LIMIT ? "LIMIT FAULT LATCHED (UNEXPECTED RUN2 LIMIT)" :
           s->fault ? "LIMIT FAULT LATCHED" : "NONE",
           Switch_IsPressed(2) ? "ON" : "OFF", tx_dropped);
     step_status();
@@ -162,6 +167,11 @@ static void status(void)
     limits();
     reply("RUN SPEEDS: STRAIGHT=%lu; CURVE=%lu; RETURN=%lu STEPS/S\r\n",
           (unsigned long)s->straight_speed, (unsigned long)s->curve_speed, (unsigned long)s->return_speed);
+    reply("RUN2 SPEEDS: STRAIGHT1=%lu; CURVE1=%lu; RETRACT1=%lu; CURVE2=%lu; RETURN2=%lu STEPS/S\r\n",
+          (unsigned long)s->run2_speeds[0], (unsigned long)s->run2_speeds[1], (unsigned long)s->run2_speeds[2],
+          (unsigned long)s->run2_speeds[3], (unsigned long)s->run2_speeds[4]);
+    reply("PROGRAM: %s; PHASE=%s; INTERMEDIATE RETRACT=%lu STEPS\r\n",
+          s->run2 ? "RUN2" : "RUN", leg(s), (unsigned long)RUN2_RETRACT_POSITION);
     reply("DEMO: %s; POSITION FROM SW4: %lu STEPS; SERVO 2: %d US\r\n",
           s->state != ROBOT_RUNNING ? (s->run_complete ? "COMPLETE" : "INACTIVE") :
           s->paused ? "PAUSED" : s->demo_backoff ? "BACKING OFF SW4" :
@@ -176,6 +186,10 @@ static void status(void)
 static const char *leg(const RobotStatus *s)
 {
     if (s->state != ROBOT_RUNNING) return "-";
+    if (s->run2 && !s->demo_homing) {
+        const char *phases[] = {"CUT1", "RETRACT1", "CUT2", "RETURN2"};
+        return phases[s->run2_phase];
+    }
     return s->demo_backoff ? "BACKOFF" : s->demo_homing ? "HOMING" : s->target == 1U ? "OUT" : "RETURN";
 }
 
@@ -219,6 +233,7 @@ static void run_events(void)
         if (!was_running) {
             was_running = 1;
             was_paused = 0;
+            if (s->run2) reply("RUN2: TWO CUTS AT 157297 STEPS; 135 THEN 145 DEG; RETRACT TO 95000 BETWEEN CUTS; FINAL RETURN TO SW4\r\n");
             if (s->demo_backoff)
                 reply("RUN STARTED: SW4 PRESSED; BACKING OFF %u STEPS, THEN HOMING\r\n",
                       (unsigned)RUN_START_BACKOFF_STEPS);
@@ -261,7 +276,7 @@ static void run_events(void)
     if (s->fault && !was_fault)
         reply("FAULT: LIMIT FAULT LATCHED (%s); ROBOT STOPPED; RESET REQUIRED\r\n",
               s->fault == ROBOT_FAULT_SW4_STUCK ? "SW4 STILL PRESSED AFTER BACK-OFF" :
-              "SW1 AND SW4 PRESSED");
+              s->fault == ROBOT_FAULT_RUN2_LIMIT ? "UNEXPECTED LIMIT DURING RUN2 COUNTED LEG" : "SW1 AND SW4 PRESSED");
     was_fault = s->fault;
 }
 
@@ -276,6 +291,7 @@ static void help(void)
     reply("%s", "available commands:\r\nType one command and press Enter. Commands ignore letter case.\r\nUse whole numbers for angles, duty, steps and speed.\r\n\r\nGENERAL\r\n  help       Show this full command guide.\r\n  ping       Test the serial link; replies OK PONG.\r\n  status     Show robot state, stepper mode/target/speed/remaining,\r\n             signed motor duty, limits, run switch and faults.\r\n             Also reports dropped serial response fragments.\r\n  limits     Read SW1-SW4: 1=pressed, 0=released; SW2 is PC11.\r\n\r\n");
     reply("AUTONOMOUS CONTROL\r\n  run        Home to SW4 first (DC off, servo 2 at calibrated straight).\r\n             Starting on SW4: back off %u steps, then home.\r\n             Push toward SW1 (DC -100%%), reverse at 157297 steps, return to\r\n             SW4 (DC +100%%), then stop on the switch: one cycle.\r\n             Servo 2 follows the smooth foam-clearance path; CLI speed.\r\n",
           (unsigned)RUN_START_BACKOFF_STEPS);
+    reply("%s", "  run2       Home, cut to 135 deg at 157297, retract to 95000,\r\n             cut to 145 deg at 157297, then return to physical SW4.\r\n             Cut 1 turns at 100000; cut 2 at 95000. Calibration applies.\r\n  speed2(straight1,curve1,retract1,curve2,return2)\r\n             Five independent speeds, each 16..2000 steps/s; stop first.\r\n             Defaults: speed2(750,500,2000,800,2000).\r\n             Homing/backoff always use 2000 steps/s; cut2 curves immediately.\r\n             run2 requires calibrated straight in 0..125 degrees.\r\n");
     reply("%s", "  pause      Freeze a run where it is: stepper and DC stop, servo\r\n             holds. The run is kept; run and manual moves are refused.\r\n  continue   Resume a paused run from where it stopped, same leg.\r\n  stop       Stop DC motor and stepper where they are, cancel pending\r\n             moves/auto, hold servo angle, and enter STOPPED.\r\n             This is a software stop, not a hardware emergency stop.\r\n\r\n");
     reply("SERVO (physical servo 2 only, PB6)\r\n  servo(angle)  Set target angle from 0 to 180 degrees.\r\n                Example: servo(%d), the centre. Enables servo 2 PWM.\r\n  servo(%uu) Set pulse width, 500..2500 us (servo 2 only).\r\n  servo(status) Show target degrees and us; -1=uncommanded.\r\n                Target is not measured position; stop holds the\r\n                servo at this last target.\r\n",
           SERVO_CENTRE_ANGLE, (unsigned)SERVO_ANGLE_US(SERVO_CENTRE_ANGLE));
@@ -287,9 +303,9 @@ static void help(void)
     reply("%s", "STEPPER\r\n  stepper(steps)    Move a signed number of STEP pulses, then stop.\r\n                    Positive goes toward SW4; negative toward SW1.\r\n                    Range: -1000000..-1 or 1..1000000.\r\n                    Examples: stepper(20), stepper(-20).\r\n                    Stops early at its target limit. Stop any current\r\n                    stepper motion before starting a counted move.\r\n  stepper(speed,n)  Set nominal speed, 16..2000 steps/second.\r\n                    Example: stepper(speed,100). Must be stopped;\r\n                    setting speed does not start movement.\r\n");
     reply("%s", "  stepper(auto)     Travel continuously between SW1 and SW4.\r\n                    Replaces a counted move; leaves DC duty unchanged.\r\n  stepper(stop)     Stop stepper and cancel pending steps/auto.\r\n                    During run, stops the whole robot.\r\n  stepper(status)   Show mode, target switch, speed and steps remaining.\r\n  stepper()         Show this guide without moving.\r\n\r\n");
     reply("%s", "TELEMETRY (printed during run)\r\n  telemetry(on)   CSV DATA rows (default on, every 1000 ms):\r\n                  ms,leg,steps,mm,servo_us,pod_deg,dc,sw1,sw4.\r\n  telemetry(N)    Same, every N ms (100..10000).\r\n  telemetry(off)  No DATA rows; RUN STARTED, TURN, RUN COMPLETE,\r\n                  STOPPED AT and FAULT lines still print.\r\n\r\n");
-    reply("%s", "  speed(straight,curve,return)\r\n             Set run section speeds, each 16..2000 steps/s, while stopped.\r\n             Example: speed(1000,500,1000). Homing/backoff use straight;\r\n             curve starts at 100000 steps from SW4 first touch;\r\n             return uses its own speed all the way home.\r\n             stepper(speed,n) sets all three speeds to n.\r\n\r\n");
+    reply("%s", "  speed(straight,curve,return)\r\n             Set run section speeds, each 16..2000 steps/s, while stopped.\r\n             Default: speed(750,500,2000). Homing/backoff always use 2000;\r\n             curve starts at 100000 steps from SW4 first touch;\r\n             return uses its own speed all the way home.\r\n             stepper(speed,n) sets all three speeds to n.\r\n\r\n");
     reply("%s", "CALIBRATION\r\n  straight()       Move servo 2 to calibrated straight (default 90 degrees).\r\n                   Keeps calibration; same restrictions as manual servo commands.\r\n  calibrate(angle) Set straight to an absolute servo angle, 0..135.\r\n                   Shifts the full 45-degree run/arc sweep. Stop all motion first.\r\n                   Manual servo commands stay absolute. Resets on power-up.\r\n  calibrate(90)    Restore the default straight angle.\r\n  calibrate(status) Show calibration and true/path vs adjusted/command angles.\r\n                   These are commands, not measured positions.\r\n\r\n");
-    reply("%s", "MOTION RULES\r\n  PC11/SW2: OFF->ON starts one cycle; ON->OFF stops (30 ms debounce).\r\n  After completion/stop, cycle OFF then ON to run again.\r\n  ON at reset requires OFF then ON before switch-started motion.\r\n  No startup interlock; UART commands work immediately.\r\n  During run, send stop before individual movement/speed commands.\r\n  SW1 and SW4 pressed together latch a fault: correct cause and reset.\r\n  SW4 still pressed after the run-start back-off also latches one.\r\n  IDLE means no full autonomous program; individual motors may move.\r\n  After stop, another accepted movement command can resume motion.\r\n\r\n");
+    reply("%s", "MOTION RULES\r\n  PC11/SW2: OFF->ON starts run2; ON->OFF stops (30 ms debounce).\r\n  After completion/stop, cycle OFF then ON to run again.\r\n  ON at reset requires OFF then ON before switch-started motion.\r\n  No startup interlock; UART commands work immediately.\r\n  During run, send stop before individual movement/speed commands.\r\n  SW1 and SW4 pressed together latch a fault: correct cause and reset.\r\n  SW4 still pressed after the run-start back-off also latches one.\r\n  IDLE means no full autonomous program; individual motors may move.\r\n  After stop, another accepted movement command can resume motion.\r\n\r\n");
 }
 
 /* Strip leading and trailing spaces and tabs in place. */
@@ -306,7 +322,7 @@ static char *trim(char *text)
    Anything else gets a syntax error and nothing moves. */
 static void command(void)
 {
-    char *words[4];
+    char *words[7];
     unsigned count = 1;
     char *text = trim(line);
     if (!*text) return;
@@ -328,10 +344,10 @@ static void command(void)
             return;
         }
         if (strcmp(words[0], "SERVO") && strcmp(words[0], "MOTOR") &&
-            strcmp(words[0], "STEPPER") && strcmp(words[0], "TELEMETRY") && strcmp(words[0], "SPEED") && strcmp(words[0], "CALIBRATE")) goto syntax_error;
+            strcmp(words[0], "STEPPER") && strcmp(words[0], "TELEMETRY") && strcmp(words[0], "SPEED") && strcmp(words[0], "SPEED2") && strcmp(words[0], "CALIBRATE")) goto syntax_error;
         if (!*args) { help(); return; }
         while (1) {
-            if (count == 4) goto syntax_error;
+            if (count == 7) goto syntax_error;
             char *comma = strchr(args, ',');
             if (comma) *comma = '\0';
             words[count] = trim(args);
@@ -350,6 +366,8 @@ static void command(void)
         Robot_Stop(); result(NULL, "ROBOT STOPPED\r\nDC MOTOR: OFF\r\nSTEPPER: STOPPED");
     } else if (!strcmp(words[0], "RUN") && count == 1)
         result(Robot_StartAuto(), "AUTONOMOUS RUN ACTIVE; use status for phase and position");
+    else if (!strcmp(words[0], "RUN2") && count == 1)
+        result(Robot_StartAuto2(), "AUTONOMOUS RUN2 ACTIVE; use status for phase and position");
     else if (!strcmp(words[0], "PAUSE") && count == 1)
         result(Robot_Pause(), "RUN PAUSED; send continue or stop");
     else if (!strcmp(words[0], "CONTINUE") && count == 1)
@@ -364,6 +382,15 @@ static void command(void)
         if (count == 4 && number(words[1], &a) && number(words[2], &b) && number(words[3], &c))
             result(Robot_SetRunSpeeds((uint32_t)a, (uint32_t)b, (uint32_t)c), "RUN SPEEDS SET (STRAIGHT, CURVE, RETURN)");
         else reply("ERROR: use speed(straight,curve,return), each 16..2000 steps/s\r\n");
+    }
+    else if (!strcmp(words[0], "SPEED2")) {
+        uint32_t speeds[5];
+        if (count != 6) goto syntax_error;
+        for (unsigned i = 0; i < 5; ++i) {
+            if (!number(words[i + 1], &a)) goto syntax_error;
+            speeds[i] = (uint32_t)a;
+        }
+        result(Robot_SetRun2Speeds(speeds), "RUN2 SPEEDS SET (STRAIGHT1, CURVE1, RETRACT1, CURVE2, RETURN2)");
     }
     else if (!strcmp(words[0], "STEPPER")) {
         if (count == 2 && !strcmp(words[1], "STATUS")) step_status();
@@ -416,7 +443,7 @@ syntax_error:
         reply("ERROR: UNKNOWN COMMAND OR INVALID PARAMETERS\r\nType help for available commands\r\n");
     }
     if (!strcmp(words[0], "CALIBRATE") || !strcmp(words[0], "SERVO") ||
-        !strcmp(words[0], "RUN") || !strcmp(words[0], "STOP") ||
+        !strcmp(words[0], "RUN") || !strcmp(words[0], "RUN2") || !strcmp(words[0], "STOP") ||
         !strcmp(words[0], "PAUSE") || !strcmp(words[0], "CONTINUE")) calibration_status();
 }
 
@@ -463,7 +490,11 @@ void Serial_Update(void)
     const RobotStatus *s = Robot_GetStatus();
     if (reported_turn != s->turn_number) {
         reported_turn = s->turn_number;
-        reply("TURN: %s; POSITION=%lu; SERVO=%u US; NEXT=SW%u; DC=%d%%; RETURN TARGET=SW4\r\n",
+        if (s->run2) reply("RUN2 TURN: POSITION=%lu; SERVO=%u US; NEXT=%s; TARGET=%s\r\n",
+              (unsigned long)s->turn_position, s->turn_pulse_us, leg(s),
+              s->run2_phase == RUN2_RETRACT1 ? "95000 FROM SW4 FIRST TOUCH" :
+              s->run2_phase == RUN2_RETURN2 ? "PHYSICAL SW4" : "157297 FROM SW4 FIRST TOUCH");
+        else reply("TURN: %s; POSITION=%lu; SERVO=%u US; NEXT=SW%u; DC=%d%%; RETURN TARGET=SW4\r\n",
               s->turn_at_position ? "OUTWARD LIMIT" : s->turn_switch == 1U ? "SW1" : "SW4", (unsigned long)s->turn_position, s->turn_pulse_us,
               s->target, s->duty);
     }

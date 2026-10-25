@@ -197,7 +197,7 @@ static void test_demo(void)
     CHECK(!Stepper1_IsBusy() && !Robot_GetStatus()->duty && servos.active[0] && fake_tim4.CCR[0] == 1500);
     send("servo(status)\n"); CHECK(strstr(output, "1500 US") && strstr(output, "stop HOLDS IT"));
     send("stepper(speed,1000)\n"); send("run\n"); /* re-homes without dropping the servo PWM */
-    CHECK(Robot_GetStatus()->demo_homing && fake_tim16.ARR == 999 && fake_tim4.CCR[0] == 1500 && servos.active[0]);
+    CHECK(Robot_GetStatus()->demo_homing && fake_tim16.ARR == 499 && fake_tim4.CCR[0] == 1500 && servos.active[0]);
     send("stop\n");
     CHECK(servo_stops == stops); /* run and stop never switched the servo PWM off */
     /* Stop must count a pulse whose rising edge has already occurred. */
@@ -635,15 +635,15 @@ static void test_run_speeds(void)
     continuous_pulses(20000);
     CHECK(Robot_GetStatus()->speed == 800 && fake_tim4.CCR[0] == 1500);
     send("pause\n"); send("continue\n"); CHECK(fake_tim16.ARR == 1249);
-    send("stop\n"); send("run\n"); CHECK(Robot_GetStatus()->speed == 1000 && fake_tim16.ARR == 999);
+    send("stop\n"); send("run\n"); CHECK(Robot_GetStatus()->speed == 2000 && fake_tim16.ARR == 499);
     send("stop\n"); pressed = GPIO_PIN_15; send("run\n");
-    CHECK(Robot_GetStatus()->demo_backoff && Robot_GetStatus()->speed == 1000 && fake_tim16.ARR == 999);
+    CHECK(Robot_GetStatus()->demo_backoff && Robot_GetStatus()->speed == 2000 && fake_tim16.ARR == 499);
     send("stop\n"); pressed = 0;
     send("stepper(speed,333)\n");
     CHECK(Robot_GetStatus()->straight_speed == 333 && Robot_GetStatus()->curve_speed == 333 && Robot_GetStatus()->return_speed == 333);
     send("stepper(10)\n"); send("speed(1000,500,1000)\n"); CHECK(strstr(output, "STOP STEPPER"));
-    reset(); CHECK(Robot_GetStatus()->straight_speed == 1000 && Robot_GetStatus()->curve_speed == 500 && Robot_GetStatus()->return_speed == 1500);
-    CHECK(Robot_GetStatus()->speed == 1000 && fake_tim16.ARR == 999);
+    reset(); CHECK(Robot_GetStatus()->straight_speed == 750 && Robot_GetStatus()->curve_speed == 500 && Robot_GetStatus()->return_speed == 2000);
+    CHECK(Robot_GetStatus()->speed == 750 && fake_tim16.ARR == 1332);
 }
 
 static void test_physical_sw4_return(void)
@@ -651,7 +651,7 @@ static void test_physical_sw4_return(void)
     reset(); run_and_home();
     continuous_pulses(RUN_OUTWARD_STOP_POSITION);
     CHECK(direction == 0 && Stepper1_IsBusy() && !Robot_GetStatus()->run_complete);
-    CHECK(!(fake_tim16.CR1 & TIM_CR1_OPM) && Robot_GetStatus()->speed == 1500);
+    CHECK(!(fake_tim16.CR1 & TIM_CR1_OPM) && Robot_GetStatus()->speed == 2000);
     continuous_pulses(Robot_GetStatus()->demo_position - (5000 + RUN_HOME_POSITION));
     CHECK(Stepper1_IsBusy() && !Robot_GetStatus()->run_complete); /* Former endpoint must not stop. */
     send("pause\n"); CHECK(!Stepper1_IsBusy());
@@ -703,7 +703,7 @@ static void test_counted_outward_limit(void)
     CHECK(Robot_GetStatus()->demo_position == RUN_OUTWARD_STOP_POSITION && fake_tim4.CCR[0] == 2000);
     CHECK(Robot_GetStatus()->outward_steps == RUN_OUTWARD_STOP_POSITION);
     CHECK(Stepper1_IsBusy() && Stepper1_Remaining() == 0 && !(fake_tim16.CR1 & TIM_CR1_OPM));
-    CHECK(Robot_GetStatus()->speed == 1500 && Robot_GetStatus()->duty == 100);
+    CHECK(Robot_GetStatus()->speed == 2000 && Robot_GetStatus()->duty == 100);
 #if LIMIT_OVERTRAVEL_STEPS
     /* Even a physical switch just before the endpoint cannot overtravel past it. */
     reset(); run_and_home();
@@ -795,8 +795,151 @@ static void test_straight(void)
     reset(); send("straight()\n"); CHECK(Robot_GetStatus()->straight_angle == 90 && fake_tim4.CCR[0] == 1500);
 }
 
+static void run2_and_home(void)
+{
+    pressed = 0; send("run2\n");
+    CHECK(Robot_GetStatus()->run2 && Robot_GetStatus()->demo_homing && Robot_GetStatus()->speed == 2000 && fake_tim16.ARR == 499);
+    pressed = GPIO_PIN_15; pump(); tick += 30; pump();
+#if LIMIT_OVERTRAVEL_STEPS
+    continuous_pulses(LIMIT_OVERTRAVEL_STEPS);
+#endif
+    pressed = 0;
+    CHECK(Robot_GetStatus()->run2_phase == RUN2_CUT1 && direction == 1);
+}
+
+static void check_run2_pause(void)
+{
+    const RobotStatus *s = Robot_GetStatus();
+    uint32_t position = s->demo_position, remaining = Stepper1_Remaining();
+    unsigned phase = s->run2_phase, width = fake_tim4.CCR[0];
+    send("pause\n");
+    CHECK(s->paused && !Stepper1_IsBusy() && !s->duty);
+    tick += 200; pump(); CHECK(s->demo_position == position && fake_tim4.CCR[0] == width);
+    send("calibrate(100)\n"); CHECK(strstr(output, "ERROR:"));
+    send("straight()\n"); CHECK(strstr(output, "ERROR:"));
+    send("speed2(1,2,3,4,5,6)\n"); CHECK(strstr(output, "ERROR:"));
+    send("run2\n"); CHECK(strstr(output, "PAUSED"));
+    send("continue\n");
+    CHECK(!s->paused && s->run2_phase == phase && s->demo_position == position);
+    CHECK(Stepper1_IsBusy() && Stepper1_Remaining() == remaining);
+}
+
+static void test_homing_speed_and_switch(void)
+{
+    for (unsigned program = 0; program < 2; ++program) {
+        reset(); send("speed(111,222,333)\n"); send("speed2(444,555,666,777,888)\n");
+        pressed = GPIO_PIN_15; send(program ? "run2\n" : "run\n");
+        CHECK(Robot_GetStatus()->demo_backoff && Robot_GetStatus()->speed == 2000 && fake_tim16.ARR == 499);
+        send("pause\n"); send("continue\n"); CHECK(Robot_GetStatus()->speed == 2000);
+        backoff_pulses(400);
+        CHECK(Robot_GetStatus()->demo_homing && Robot_GetStatus()->speed == 2000 && fake_tim16.ARR == 499);
+        send("pause\n"); send("continue\n"); CHECK(Robot_GetStatus()->speed == 2000);
+        pressed = GPIO_PIN_15; pump(); tick += 30; pump();
+#if LIMIT_OVERTRAVEL_STEPS
+        CHECK(Robot_GetStatus()->speed == 2000);
+        continuous_pulses(LIMIT_OVERTRAVEL_STEPS);
+#endif
+        CHECK(!Robot_GetStatus()->demo_homing && Robot_GetStatus()->speed == (program ? 444U : 111U));
+    }
+    reset(); send("calibrate(126)\n"); run_switch(1);
+    CHECK(!Stepper1_IsBusy() && Robot_GetStatus()->state != ROBOT_RUNNING);
+    run_switch(0); send("calibrate(125)\n"); run_switch(1);
+    CHECK(Robot_GetStatus()->run2 && Robot_GetStatus()->demo_homing && Robot_GetStatus()->speed == 2000);
+    reset();
+    const uint32_t expected[] = {750,500,2000,800,2000};
+    for (unsigned i = 0; i < 5; ++i) CHECK(Robot_GetStatus()->run2_speeds[i] == expected[i]);
+}
+
+static void test_run2(void)
+{
+    const unsigned straights[] = {0, 90, 110, 125};
+    for (unsigned test = 0; test < sizeof straights / sizeof straights[0]; ++test) {
+        reset();
+        CHECK(Robot_Calibrate(straights[test]) == NULL);
+        int offset = (int)SERVO_ANGLE_US(straights[test]) - (int)DEMO_START_PULSE_US;
+        send("speed2(800,400,1200,600,1600)\n"); CHECK(strstr(output, "OK:"));
+        CHECK(Robot_GetStatus()->straight_speed == 750); /* independent profiles */
+        run2_and_home();
+        const RobotStatus *r = Robot_GetStatus();
+        CHECK(r->speed == 800);
+        check_run2_pause();
+        continuous_pulses(100000U + LIMIT_OVERTRAVEL_STEPS);
+        CHECK(r->speed == 400 && fake_tim4.CCR[0] == SERVO_ANGLE_US(straights[test]));
+        continuous_pulses(RUN_OUTWARD_END_STEPS - 100000U);
+        CHECK(r->demo_position == RUN_OUTWARD_STOP_POSITION && direction == 0);
+        CHECK(r->run2_phase == RUN2_RETRACT1 && r->speed == 1200);
+        CHECK((int)fake_tim4.CCR[0] == (int)DEMO_END_PULSE_US + offset);
+        CHECK(Stepper1_Remaining() == RUN_OUTWARD_STOP_POSITION - RUN2_RETRACT_POSITION);
+        check_run2_pause();
+        continuous_pulses(Stepper1_Remaining() - 1U);
+        CHECK(r->demo_position == RUN2_RETRACT_POSITION + 1U && direction == 0);
+        /* Counted timer must stop on the exact endpoint even before main-loop polling. */
+        fake_tim16.CNT = 0; pulse(); CHECK(!Stepper1_IsBusy()); pump();
+        CHECK(r->demo_position == RUN2_RETRACT_POSITION && r->run2_phase == RUN2_CUT2);
+        CHECK(direction == 1 && r->speed == 600 && !r->demo_homing);
+        CHECK(fake_tim4.CCR[0] == SERVO_ANGLE_US(straights[test]));
+        check_run2_pause();
+        continuous_pulses(1000);
+        CHECK(r->speed == 600 && fake_tim4.CCR[0] > SERVO_ANGLE_US(straights[test]));
+        /* Original 125000 knot, remapped into the longer second curve. */
+        uint32_t knot = RUN2_CURVE_START_STEPS +
+            (25000U * (RUN_OUTWARD_END_STEPS - RUN2_CURVE_START_STEPS) + 57296U) / 57297U;
+        continuous_pulses(knot - RUN2_CURVE_START_STEPS - 1000U);
+        CHECK((int)fake_tim4.CCR[0] == 1771 + offset); /* expanded 110-degree knot */
+        check_run2_pause();
+        continuous_pulses(RUN_OUTWARD_END_STEPS - knot);
+        CHECK(r->run2_phase == RUN2_RETURN2 && r->demo_position == RUN_OUTWARD_STOP_POSITION);
+        CHECK(r->speed == 1600 && direction == 0);
+        CHECK((int)fake_tim4.CCR[0] == (int)SERVO_ANGLE_US(145) + offset);
+        check_run2_pause();
+        continuous_pulses(RUN_OUTWARD_END_STEPS - knot);
+        CHECK((int)fake_tim4.CCR[0] == 1771 + offset); /* return retraces cut 2 */
+        continuous_pulses(knot - RUN2_CURVE_START_STEPS);
+        CHECK(fake_tim4.CCR[0] == SERVO_ANGLE_US(straights[test]));
+        continuous_pulses(RUN2_CURVE_START_STEPS);
+        CHECK(Stepper1_IsBusy() && r->state == ROBOT_RUNNING); /* requires actual SW4 */
+        pressed = GPIO_PIN_15; pump(); tick += 30; pump();
+        CHECK(r->run_complete && r->state == ROBOT_STOPPED && !Stepper1_IsBusy());
+        CHECK(!r->duty && r->home_step_error == 0 && r->demo_position == RUN_HOME_POSITION);
+        CHECK(fake_tim4.CCR[0] == SERVO_ANGLE_US(straights[test]));
+        send("status\n"); CHECK(strstr(output, "RUN2 SPEEDS:") && strstr(output, "PROGRAM: RUN2"));
+    }
+    reset(); send("calibrate(126)\n"); send("run2\n");
+    CHECK(strstr(output, "REQUIRES CALIBRATION 0..125") && !Stepper1_IsBusy());
+    send("run\n"); CHECK(Robot_GetStatus()->state == ROBOT_RUNNING); /* run1 still allows 126..135 */
+    send("stop\n"); send("calibrate(90)\n");
+    const char *invalid[] = {"speed2(1,500,2000,800,2000)\n", "speed2(1000,500,2000,800,2001)\n",
+        "speed2(1000,500,1500)\n", "speed2(1000,500,2000,800,-1)\n", "speed2(1000,500,1500,1000,500,1500,1)\n",
+        "speed2(1000,500,2000,,2000)\n", "speed2(1000,500,2000,800,x)\n"};
+    for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
+        send(invalid[i]); CHECK(strstr(output, "ERROR:"));
+        CHECK(Robot_GetStatus()->run2_speeds[0] == 750 && Robot_GetStatus()->run2_speeds[4] == 2000);
+    }
+    for (unsigned phase = 0; phase < 4; ++phase) {
+        reset(); run2_and_home();
+        if (phase >= 1) continuous_pulses(RUN_OUTWARD_STOP_POSITION);
+        if (phase >= 2) continuous_pulses(RUN_OUTWARD_STOP_POSITION - RUN2_RETRACT_POSITION);
+        if (phase >= 3) continuous_pulses(RUN_OUTWARD_STOP_POSITION - RUN2_RETRACT_POSITION);
+        CHECK(Robot_GetStatus()->run2_phase == phase);
+        send("run\n"); CHECK(strstr(output, "RUN2 ACTIVE"));
+        send("speed2(800,400,1200,600,1600)\n"); CHECK(strstr(output, "STOP STEPPER"));
+        send("stop\n"); tick += 100; pump();
+        CHECK(!Stepper1_IsBusy() && !Robot_GetStatus()->duty && !Robot_GetStatus()->run_complete);
+    }
+    reset(); run2_and_home(); continuous_pulses(1000);
+    pressed = GPIO_PIN_14; pump(); tick += 30; pump();
+    CHECK(Robot_GetStatus()->fault == ROBOT_FAULT_RUN2_LIMIT && !Stepper1_IsBusy());
+    reset(); run2_and_home(); continuous_pulses(RUN_OUTWARD_STOP_POSITION);
+    pressed = GPIO_PIN_15; pump(); tick += 30; pump();
+    CHECK(Robot_GetStatus()->fault == ROBOT_FAULT_RUN2_LIMIT && !Stepper1_IsBusy());
+    reset(); run2_and_home(); run_switch(1); run_switch(0);
+    CHECK(!Stepper1_IsBusy() && Robot_GetStatus()->state == ROBOT_STOPPED);
+}
+
 int main(void)
 {
+    test_homing_speed_and_switch();
+    test_run2();
     test_straight();
     test_calibration();
     test_counted_outward_limit();
@@ -814,13 +957,14 @@ int main(void)
     for (unsigned i = 0; i < LIMIT_OVERTRAVEL_STEPS; ++i) pulse();
     pump();
 #endif
-    pressed = GPIO_PIN_11; continuous_pulses(10000 + LIMIT_OVERTRAVEL_STEPS);
-    pressed = GPIO_PIN_11 | GPIO_PIN_14; pump(); tick += 30; pump();
-#if LIMIT_OVERTRAVEL_STEPS
-    for (unsigned i = 0; i < LIMIT_OVERTRAVEL_STEPS; ++i) pulse();
-    pump();
-#endif
-    pressed = GPIO_PIN_11; continuous_pulses(Robot_GetStatus()->demo_position - RUN_HOME_POSITION);
+    CHECK(Robot_GetStatus()->run2 && Robot_GetStatus()->run2_phase == RUN2_CUT1);
+    pressed = GPIO_PIN_11; continuous_pulses(RUN_OUTWARD_STOP_POSITION);
+    CHECK(Robot_GetStatus()->run2_phase == RUN2_RETRACT1);
+    continuous_pulses(RUN_OUTWARD_STOP_POSITION - RUN2_RETRACT_POSITION);
+    CHECK(Robot_GetStatus()->run2_phase == RUN2_CUT2 && Robot_GetStatus()->speed == 800);
+    continuous_pulses(RUN_OUTWARD_STOP_POSITION - RUN2_RETRACT_POSITION);
+    CHECK(Robot_GetStatus()->run2_phase == RUN2_RETURN2 && Robot_GetStatus()->speed == 2000);
+    continuous_pulses(RUN_OUTWARD_END_STEPS);
     pressed |= GPIO_PIN_15; pump(); tick += 30; pump();
     CHECK(Robot_GetStatus()->run_complete && Robot_GetStatus()->state == ROBOT_STOPPED);
     tick += 1000; pump(); CHECK(!Stepper1_IsBusy());
